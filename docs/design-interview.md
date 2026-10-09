@@ -21,6 +21,11 @@
 - Produce reports of exposed reasoning summaries and tool calls, alongside patches and outcomes.
 - Compare harness composition and behavior first with fixed tasks and models; model comparisons follow under a fixed harness.
 - Use the user's ML Tutor (`Versionfm/prompt-engineering-group-project`) as the first task repository, with introduced behavioral bugs. Click is the intended second repository later.
+- Share task inputs, prompts, model interface, tools, state definitions, budgets, and evaluation between the Python loop and LangGraph. Initially vary orchestration only; explain each LangGraph component's role.
+- First task family: retrieval selection, with a source-validated behavioral defect and regression checks.
+- Tools: file reading, text search, patch editing, and shell execution, with arguments, results, duration, and errors recorded.
+- Shell commands start in the task repository within a disposable container. Canonical checks run in a fresh evaluator environment outside the agent's control.
+- Reports: machine-readable traces plus clean, legible local HTML with event timeline, exposed reasoning summaries, tool results, code diff, acceptance results, and separate evaluator review. Compare implementations side by side.
 
 ## Decision tree
 
@@ -84,7 +89,7 @@ Read-only GitHub inspection found:
 
 No candidate has been cloned or executed during this interview. Counts describe inspected files, not test cases. Specific task and scoring decisions will follow repository selection.
 
-## Round 4 — awaiting answers
+## Round 4 — answered
 
 14. Comparison boundary: should the explicit loop and LangGraph share tools, task inputs, model interface, state meaning, budgets, and evaluation?
    Recommendation: yes; vary orchestration first and introduce framework-specific capabilities as later experiments.
@@ -98,3 +103,16 @@ No candidate has been cloned or executed during this interview. Counts describe 
    Recommendation: disposable container with a writable task repository, prepared dependencies, and evaluator execution outside the agent's control.
 
 The user has confirmed the direction but not a complete implementation design. Continue the interview until remaining branches are resolved and shared understanding is explicitly confirmed.
+
+## Round 5 — awaiting answers
+
+19. First model integration: one hosted model, one local model, or both immediately?
+   Recommendation: begin with one inexpensive hosted model behind a replaceable adapter, then validate a local model before comparisons. Exact models require current availability and hardware checks.
+20. What repository context should the agent receive initially?
+   Recommendation: task description, repository instructions, and a short file map; let the agent inspect relevant source through tools rather than preload the whole repository.
+21. How should an attempt stop?
+   Recommendation: agent-declared completion plus hard limits on model turns, wall time, and output/tool-result size; preserve partial artifacts on failure. Specific limits should be calibrated by a smoke run.
+22. What must happen before implementation is considered complete for the first milestone?
+   Recommendation: prove the clean baseline passes, the introduced defect fails independent checks, a known repair passes, and both harnesses produce comparable traces and reports; an agent failure remains a valid measured outcome.
+
+Detailed context management, provider access, task packaging, and execution policies will follow these answers. Implementation remains pending final confirmation of shared understanding.
