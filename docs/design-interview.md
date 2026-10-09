@@ -64,4 +64,16 @@ The user's answers confirm both learning tracks, familiar and understandable tas
 12. Comparison goal: measure model differences first or improvements to harness behavior first?
    Recommendation: keep tasks and model fixed while testing harness changes first; then compare models under a fixed harness.
 
-Repository selection awaits read-only inspection of the user's GitHub apps. Specific task and scoring decisions will follow the selections above.
+13. First task repository: the user's prompt-engineering-group-project or a small external library such as Click?
+   Recommendation: prompt-engineering-group-project, using offline retrieval/citation/history behavior; reserve Click for a second repository.
+
+## Repository candidate facts
+
+Read-only GitHub inspection found:
+
+- `Versionfm/prompt-engineering-group-project`: four functional app modules and nine unit-test modules. README describes API-key-free unit tests; inspected tutor/source tests use fake chat and synthetic section fixtures. Candidate offline behaviors include retrieval selection, citation matching, history propagation, and evaluation parsing. Recommended familiar starting point, subject to a pinned revision and reproduced baseline tests.
+- `Versionfm/bank-statement-assistant`: richer test coverage, but the complete app requires PostgreSQL, workers, model serving, and frontend setup. Isolated parser/validation/reporting tasks could be offline but require carefully bounded synthetic fixtures.
+- `Versionfm/vibecoders-p1`: minimal prompt CLI and an empty tests directory; building task acceptance infrastructure would dominate the initial benchmark work.
+- `pallets/click`: compact Python CLI library with no declared runtime dependencies in current project metadata; useful independent second repository.
+
+No candidate has been cloned or executed during this interview. Counts describe inspected files, not test cases. Specific task and scoring decisions will follow repository selection.
