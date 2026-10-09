@@ -15,6 +15,12 @@
 - Keep canonical acceptance checks outside the agent's writable task copy. The agent delivers its observable reasoning, tool activity, and code diff for evaluator review.
 - Use Codex as an evaluator/reviewer; the respective roles of executable checks and qualitative review still need clarification.
 - First milestone: one reproducible repair attempt with trace, diff, independent verdict, elapsed time, and usage measurements. It must exercise a design that can support harder tasks.
+- Build an explicit Python agent loop and a side-by-side LangGraph implementation for learning what the framework handles.
+- Teach through incremental slices, with explanations, observable experiments, and user inspection before expansion.
+- Executable acceptance checks determine functional success; Codex separately reviews diagnosis, tool use, patch quality, and failure cases.
+- Produce reports of exposed reasoning summaries and tool calls, alongside patches and outcomes.
+- Compare harness composition and behavior first with fixed tasks and models; model comparisons follow under a fixed harness.
+- Use the user's ML Tutor (`Versionfm/prompt-engineering-group-project`) as the first task repository, with introduced behavioral bugs. Click is the intended second repository later.
 
 ## Decision tree
 
@@ -53,7 +59,7 @@ The user's answers supersede the recommendations above. No implementation stack 
 
 The user's answers confirm both learning tracks, familiar and understandable task repositories, independent evaluation, and the milestone above. Cheap hosted and local models remain part of the intended benchmark scope.
 
-## Round 3 — awaiting answers
+## Round 3 — answered
 
 9. Agent construction: transparent custom loop or a framework-managed agent?
    Recommendation: a small Python tool loop with explicit model calls, tool dispatch, context management, and termination; keep provider integration replaceable.
@@ -77,3 +83,18 @@ Read-only GitHub inspection found:
 - `pallets/click`: compact Python CLI library with no declared runtime dependencies in current project metadata; useful independent second repository.
 
 No candidate has been cloned or executed during this interview. Counts describe inspected files, not test cases. Specific task and scoring decisions will follow repository selection.
+
+## Round 4 — awaiting answers
+
+14. Comparison boundary: should the explicit loop and LangGraph share tools, task inputs, model interface, state meaning, budgets, and evaluation?
+   Recommendation: yes; vary orchestration first and introduce framework-specific capabilities as later experiments.
+15. First task family: retrieval, citation matching, or conversation history?
+   Recommendation: retrieval selection, with a nontrivial behavioral defect and independent acceptance checks. Task specifics require source inspection.
+16. Initial tool surface: a general shell alone or named repository tools plus a shell?
+   Recommendation: file reading, text search, patch editing, and shell execution, each producing structured trace events.
+17. Initial report form: raw trace only, Markdown, or navigable HTML?
+   Recommendation: machine-readable trace plus a local HTML report linking timeline events, tool results, diff, checks, and separate evaluator judgments.
+18. Execution environment: isolated task directory or a container boundary?
+   Recommendation: disposable container with a writable task repository, prepared dependencies, and evaluator execution outside the agent's control.
+
+The user has confirmed the direction but not a complete implementation design. Continue the interview until remaining branches are resolved and shared understanding is explicitly confirmed.
