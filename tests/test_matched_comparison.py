@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import platform
 from pathlib import Path
 import tempfile
 import unittest
@@ -301,6 +302,8 @@ class MatchedMeasurementClassificationTests(unittest.TestCase):
         metadata = {
             "task_id": "task",
             "task_version": "1",
+            "task_identity": {"task_id": "task", "task_version": "1"},
+            "task_package_sha256": "c" * 64,
             "source_revision": "revision",
             "acceptance_check_version": "checks-1",
             "provider": "provider",
@@ -321,6 +324,12 @@ class MatchedMeasurementClassificationTests(unittest.TestCase):
         graph_result = {"metadata": json.loads(json.dumps(metadata))}
         self.assertTrue(_configuration_matches(python_result, graph_result)[0])
 
+        graph_result["metadata"]["task_package_sha256"] = "0" * 64
+        matched, mismatches = _configuration_matches(python_result, graph_result)
+        self.assertFalse(matched)
+        self.assertIn("task package fingerprint", mismatches)
+        graph_result["metadata"]["task_package_sha256"] = "c" * 64
+
         python_result["metadata"]["dependency_versions"] = {}
         graph_result["metadata"]["dependency_versions"] = {}
         matched, mismatches = _configuration_matches(python_result, graph_result)
@@ -331,6 +340,11 @@ class MatchedMeasurementClassificationTests(unittest.TestCase):
         matched, mismatches = _configuration_matches(python_result, graph_result)
         self.assertFalse(matched)
         self.assertIn("dependency versions", mismatches)
+
+    def test_dependency_provenance_includes_outer_python_and_langgraph(self):
+        versions = _dependency_versions()
+        self.assertEqual(versions["python-runtime"], platform.python_version())
+        self.assertTrue(versions["langgraph"])
 
 
 if __name__ == "__main__":

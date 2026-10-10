@@ -10,6 +10,7 @@ import difflib
 import hashlib
 import importlib.metadata
 import json
+import platform
 from pathlib import Path, PurePosixPath
 import queue
 import shutil
@@ -129,6 +130,8 @@ class AdmittedTask:
     task_version: str
     source_revision: str
     acceptance_check_version: str
+    task_identity: dict[str, Any]
+    task_package_sha256: str
     source_repository: Path
     image: str
     runtime_version: str
@@ -172,6 +175,8 @@ class AdmittedTask:
             task_version=manifest["task_version"],
             source_revision=manifest["source"]["revision"],
             acceptance_check_version=manifest["acceptance_check_version"],
+            task_identity=current_package["identity"],
+            task_package_sha256=current_package["sha256"],
             source_repository=source_repository,
             image=image,
             runtime_version=manifest["environment"]["runtime"].removeprefix("Python "),
@@ -265,7 +270,7 @@ def _harness_provenance() -> dict[str, Any]:
 
 
 def _dependency_versions() -> dict[str, str]:
-    versions = {}
+    versions = {"python-runtime": platform.python_version()}
     for distribution in importlib.metadata.distributions():
         name = distribution.metadata.get("Name")
         if isinstance(name, str) and name:
@@ -985,6 +990,8 @@ def attempt_and_evaluate(
             "task_version": admitted_task.task_version,
             "source_revision": admitted_task.source_revision,
             "acceptance_check_version": admitted_task.acceptance_check_version,
+            "task_identity": _json_copy(admitted_task.task_identity),
+            "task_package_sha256": admitted_task.task_package_sha256,
             "requested_model": model_config.requested_model,
             "provider": model_config.provider,
             "model_settings": _json_copy(dict(model_config.settings)),

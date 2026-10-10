@@ -227,6 +227,8 @@ def _configuration_matches(python_result: dict[str, Any], graph_result: dict[str
     fields = (
         ("task_id", "task id"),
         ("task_version", "task version"),
+        ("task_identity", "task identity"),
+        ("task_package_sha256", "task package fingerprint"),
         ("source_revision", "source revision"),
         ("acceptance_check_version", "acceptance checks"),
         ("provider", "provider"),

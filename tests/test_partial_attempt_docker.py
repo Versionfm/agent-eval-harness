@@ -6,6 +6,7 @@ import json
 import base64
 import importlib.metadata
 import os
+import platform
 from pathlib import Path
 import tempfile
 import time
@@ -132,6 +133,14 @@ class PartialAttemptDockerTests(unittest.TestCase):
         self.assertEqual(
             result["metadata"]["dependency_versions"]["langgraph"],
             importlib.metadata.version("langgraph"),
+        )
+        self.assertEqual(
+            result["metadata"]["dependency_versions"]["python-runtime"],
+            platform.python_version(),
+        )
+        self.assertEqual(result["metadata"]["task_identity"], self.task.task_identity)
+        self.assertEqual(
+            result["metadata"]["task_package_sha256"], self.task.task_package_sha256
         )
         self.assertIsNotNone(result["metadata"]["harness_revision"]["commit"])
         self.assertIn(result["metadata"]["harness_revision"]["working_tree"], {"clean", "dirty"})

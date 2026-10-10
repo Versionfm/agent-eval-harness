@@ -24,6 +24,14 @@ class RecordedComparisonReportTests(unittest.TestCase):
                 "task_version": "1",
                 "source_revision": "abc123",
                 "acceptance_check_version": "checks-v1",
+                "task_identity": {
+                    "task_id": "ml_tutor_retrieval",
+                    "task_version": "1",
+                    "acceptance_check_version": "checks-v1",
+                    "source_revision": "abc123",
+                    "acceptance_check_ids": ["title_retrieval"],
+                },
+                "task_package_sha256": "a" * 64,
                 "task_container_image": "agent-eval-harness/ml-tutor-admission:1.0.0",
                 "runtime_version": "3.12.13",
                 "task_image_evidence": {
@@ -196,6 +204,10 @@ class RecordedComparisonReportTests(unittest.TestCase):
             self.assertIn("Configuration match", rendered)
             self.assertRegex(
                 rendered,
+                r"Task definition</th><td><span class=\"status good\">match</span>",
+            )
+            self.assertRegex(
+                rendered,
                 r"Task Dockerfile and runtime</th><td><span class=\"status good\">match</span>",
             )
             self.assertRegex(
@@ -239,6 +251,7 @@ class RecordedComparisonReportTests(unittest.TestCase):
             graph_metadata = json.loads(graph_metadata_path.read_text(encoding="utf-8"))
             graph_metadata["dependency_versions"]["langgraph"] = "different-version"
             graph_metadata["harness_revision"]["working_tree_sha256"] = "sha256:other-tree"
+            graph_metadata["task_package_sha256"] = "0" * 64
             graph_metadata_path.write_text(json.dumps(graph_metadata), encoding="utf-8")
             provenance_output = root / "provenance-mismatch.html"
             self.assertEqual(main([
@@ -254,6 +267,10 @@ class RecordedComparisonReportTests(unittest.TestCase):
             self.assertRegex(
                 provenance_rendered,
                 r"Harness revision</th><td><span class=\"status bad\">mismatch</span>",
+            )
+            self.assertRegex(
+                provenance_rendered,
+                r"Task definition</th><td><span class=\"status bad\">mismatch</span>",
             )
             self.assertIn("Diagnosis &lt;script&gt;alert(1)&lt;/script&gt;", rendered)
             self.assertNotIn("<script>alert(1)</script>", rendered)
