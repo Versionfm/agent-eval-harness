@@ -3,12 +3,12 @@
 // attempt is followed over the stream, and the selection follows the newest event only until the reader moves
 // away. connection.ts owns live delivery. Evidence is written with textContent only.
 
-import { buildComponentMap, updateComponentCounts } from "./components.js";
+import { WorkflowMap } from "./components.js";
 import { Accepted, Progress, Recording, follow } from "./connection.js";
 import { el } from "./dom.js";
 import { renderFinal } from "./final.js";
 import { Inspector } from "./inspector.js";
-import { COMPONENTS, OPERATION_STARTS, TrackerEvent, componentOf } from "./model.js";
+import { COMPONENTS, OPERATION_STARTS, TrackerEvent, componentsOf } from "./model.js";
 import { Playback } from "./playback.js";
 
 const timeline = document.getElementById("timeline") as HTMLOListElement;
@@ -16,6 +16,7 @@ const status = document.getElementById("status") as HTMLElement;
 const detail = document.getElementById("detail") as HTMLElement;
 const lag = document.getElementById("lag") as HTMLElement;
 const components = document.getElementById("components") as HTMLElement;
+const workflowMap = new WorkflowMap(components, selectComponent);
 const modeLine = document.getElementById("mode") as HTMLElement;
 const reportLink = document.getElementById("report-link") as HTMLAnchorElement;
 const finalPanel = document.getElementById("final") as HTMLElement;
@@ -138,7 +139,6 @@ function appendRow(event: TrackerEvent): void {
   const row = buildRow(event);
   rows.set(event.sequence, row);
   timeline.append(row);
-  updateComponentCounts(components, events);
 }
 
 // Only accepted events reach the timeline: duplicates are dropped by the ledger, gaps and conflicts are explicit rows.
@@ -188,7 +188,7 @@ function markRows(): void {
       continue;
     }
     row.classList.toggle("selected", event.sequence === selectedSequence);
-    row.classList.toggle("match", activeComponent !== null && componentOf(event) === activeComponent);
+    row.classList.toggle("match", activeComponent !== null && componentsOf(event).includes(activeComponent));
     if (!OPERATION_STARTS.has(event.type)) {
       continue;
     }
@@ -198,6 +198,7 @@ function markRows(): void {
     row.classList.toggle("waiting", label === "waiting");
     row.querySelector(".operation-status")!.textContent = label;
   }
+  workflowMap.update(events, selectedIndex, stopped, activeComponent);
 }
 
 function syncPlayback(): void {
@@ -243,7 +244,7 @@ function selectComponent(id: string): void {
   }
   activeComponent = id;
   markRows();
-  const count = events.filter((event) => componentOf(event) === id).length;
+  const count = events.filter((event) => componentsOf(event).includes(id)).length;
   void inspector.showComponent(component, count);
 }
 
@@ -283,7 +284,7 @@ async function start(): Promise<void> {
     document.getElementById("evidence") as HTMLElement,
   );
   playback = new Playback(controls, selectIndex);
-  buildComponentMap(components, selectComponent);
+  markRows();
   reportLink.href = `/api/attempts/${encodeURIComponent(attemptId)}/report`;
   reportLink.hidden = false;
   void renderFinal(finalPanel, attemptId);

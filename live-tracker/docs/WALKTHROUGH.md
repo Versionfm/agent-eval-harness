@@ -55,7 +55,7 @@ Reading the table: selecting `model-1`'s outcome shows no state, because no stat
 
 ## Components and source navigation
 
-The component map (left pane) lists the registered components. Selecting one shows its responsibility, its registered source function (file and line range) and the function's text. Phase and graph-node events link to the same registered record. Only identities in `live_tracker.sources.REGISTERED_SOURCES` resolve; the server never serves an arbitrary path.
+The execution map (left pane, #13) draws the flow the attempt recorded: the Python loop (attempt, model request, tool execution, repository capture, candidate collection, independent checks, finish) or the LangGraph graph (START, model request, router, tool execution, END, then the same finish nodes). The flow comes from `attempt_started`; a legacy trace, which records no transitions, shows the flow derived from its event types and says so. For the selected event, the active node is the one its event belongs to. A node is reached when recorded events up to the selected sequence belong to it; a start with no outcome yet is waiting while the attempt is live and unresolved once the recording stopped; nodes after the selected point are dimmed. Edges taken by the selected point are solid and labelled with the recorded reason (for LangGraph, the `route.decision` reason; for the Python loop, the recorded termination). Selecting a node shows its responsibility, its registered source function (file and line range) and the function's text, and highlights its timeline rows. Only identities in `live_tracker.sources.REGISTERED_SOURCES` resolve; the server never serves an arbitrary path.
 
 ## LangGraph source walkthrough (#15)
 

@@ -37,16 +37,18 @@ export interface ComponentInfo {
 // legacy tool outputs by their recorded relative path.
 export const ARTIFACT_PATH = /^(artifacts\/[0-9a-f]{64}|tool-results\/event-\d{4}\.txt)$/;
 
-// Graph node components point at the shared functions their nodes run. Graph events select them by
-// node name, and Python phases by source, so the shared identities never collide.
+// The nodes of the execution map. Each identity is a registered source function (live_tracker/sources.py):
+// candidate collection, independent checks and finish are all recorded by attempt_and_evaluate.
 export const COMPONENTS: ComponentInfo[] = [
   { id: "attempt", identity: "agent_eval_harness.attempt:attempt_and_evaluate", label: "Attempt lifecycle" },
-  { id: "python-loop", identity: "agent_eval_harness.loop:run_python_loop", label: "Python loop" },
   { id: "model-request", identity: "agent_eval_harness.loop:_request_model_turn", label: "Model request" },
   { id: "tool-execution", identity: "agent_eval_harness.tools:execute_tool_turn", label: "Tool execution" },
-  { id: "graph-model-node", identity: "agent_eval_harness.loop:_request_model_turn", label: "LangGraph model_request node" },
-  { id: "graph-tool-node", identity: "agent_eval_harness.tools:execute_tool_turn", label: "LangGraph tool_execution node" },
+  { id: "repository-capture", identity: "agent_eval_harness.tools:execute_tool_turn", label: "Repository capture" },
   { id: "graph-router", identity: "agent_eval_harness.langgraph_attempt:route_after_node", label: "LangGraph router" },
+  { id: "graph-end", identity: "agent_eval_harness.langgraph_attempt:route_after_node", label: "LangGraph END" },
+  { id: "candidate", identity: "agent_eval_harness.attempt:attempt_and_evaluate", label: "Candidate collection" },
+  { id: "checks", identity: "agent_eval_harness.attempt:attempt_and_evaluate", label: "Independent checks" },
+  { id: "finish", identity: "agent_eval_harness.attempt:attempt_and_evaluate", label: "Finish" },
 ];
 
 const PHASE_COMPONENT: Record<string, string> = {
@@ -54,9 +56,10 @@ const PHASE_COMPONENT: Record<string, string> = {
   "agent_eval_harness.tools:execute_tool_turn": "tool-execution",
 };
 
-const GRAPH_NODE_COMPONENT: Record<string, string> = {
-  model_request: "graph-model-node",
-  tool_execution: "graph-tool-node",
+// Graph nodes run the same model and tool functions as the Python phases.
+const NODE_COMPONENT: Record<string, string> = {
+  model_request: "model-request",
+  tool_execution: "tool-execution",
 };
 
 // Starts whose outcome may be missing; a missing outcome is shown as waiting or unresolved.
@@ -65,32 +68,42 @@ export const OPERATION_STARTS = new Set(["node.enter", "model.start", "tool.star
 // Tools whose outcome is followed by a repository capture (tool.capture, linked by parent_operation_id).
 export const MUTATING_TOOLS = new Set(["apply_patch", "run_shell"]);
 
-// The component whose registered source function produced the event, or null.
-export function componentOf(event: TrackerEvent): string | null {
-  if (event.type === "phase.enter") {
-    return PHASE_COMPONENT[event.data.source] ?? null;
-  }
-  if (event.type === "node.enter" || event.type === "node.outcome") {
-    return GRAPH_NODE_COMPONENT[event.data.node] ?? null;
-  }
-  if (event.type === "route.decision") {
-    return "graph-router";
-  }
-  if (event.type === "state") {
-    return event.data.after_node !== undefined
-      ? GRAPH_NODE_COMPONENT[event.data.after_node] ?? null
-      : "python-loop";
+// The map nodes an event belongs to, the event's own node first. An end decision is both the router's and
+// END's. Termination and the other events without a node are not on the map.
+export function componentsOf(event: TrackerEvent): string[] {
+  switch (event.type) {
+    case "phase.enter":
+      return one(PHASE_COMPONENT[event.data.source]);
+    case "node.enter":
+    case "node.outcome":
+      return one(NODE_COMPONENT[event.data.node]);
+    case "route.decision":
+      return event.data.next === "end" ? ["graph-router", "graph-end"] : ["graph-router"];
+    case "state":
+      return one(NODE_COMPONENT[event.data.after_node ?? event.data.after_phase]);
+    case "attempt_started":
+    case "initial_context":
+      return ["attempt"];
+    case "patch_collection":
+      return ["candidate"];
+    case "evaluation":
+      return ["checks"];
+    case "attempt_finished":
+      return ["finish"];
+    case "tool.capture":
+      return ["repository-capture"];
   }
   if (event.type.startsWith("model.")) {
-    return "model-request";
+    return ["model-request"];
   }
   if (event.type.startsWith("tool.")) {
-    return "tool-execution";
+    return ["tool-execution"];
   }
-  if (event.type === "attempt_started" || event.type === "initial_context" || event.type === "attempt_finished") {
-    return "attempt";
-  }
-  return null;
+  return [];
+}
+
+function one(component: string | undefined): string[] {
+  return component === undefined ? [] : [component];
 }
 
 // Selected-point state: the newest state event at or before the selected sequence.
