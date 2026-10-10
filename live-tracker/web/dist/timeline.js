@@ -1,10 +1,19 @@
-// Minimal timeline client: one attempt, rendered from the saved history plus SSE.
-// Evidence is written with textContent only; links are built from validated paths.
-const ARTIFACT_PATH = /^artifacts\/[0-9a-f]{64}$/;
+// Workbench entry point (layout A): component map, chronological timeline and inspector.
+// The saved history plus SSE feed one attempt. Evidence is written with textContent only.
+import { buildComponentMap, updateComponentCounts } from "./components.js";
+import { el } from "./dom.js";
+import { Inspector } from "./inspector.js";
+import { COMPONENTS, componentOf } from "./model.js";
 const timeline = document.getElementById("timeline");
 const status = document.getElementById("status");
+const components = document.getElementById("components");
 let attemptId = "";
+let inspector;
+const events = [];
+const rows = new Map();
 let lastSequence = 0;
+let selectedSequence = null;
+let activeComponent = null;
 function describe(event) {
     const data = event.data;
     switch (event.type) {
@@ -12,6 +21,10 @@ function describe(event) {
             return `attempt started for ${data.task_id} (${data.orchestrator})`;
         case "initial_context":
             return `initial context with ${data.message_count} messages`;
+        case "phase.enter":
+            return `phase ${data.phase} (loop step ${data.loop_step})`;
+        case "state":
+            return `state: ${data.model_calls ?? "?"} model calls, ${data.context_bytes ?? "?"} context bytes`;
         case "model.start":
             return `model call ${data.model_call} started with ${data.message_count} messages`;
         case "model.outcome":
@@ -26,43 +39,63 @@ function describe(event) {
             return event.type;
     }
 }
+function buildRow(event) {
+    const row = el("li");
+    row.dataset.type = event.type;
+    row.dataset.sequence = String(event.sequence);
+    const button = el("button", "row");
+    button.type = "button";
+    button.append(el("span", "sequence", `#${event.sequence}`), el("span", "kind", event.type), el("span", "text", describe(event)));
+    if (event.operation_id) {
+        button.append(el("code", "", event.operation_id));
+    }
+    button.addEventListener("click", () => selectEvent(event.sequence));
+    row.append(button);
+    return row;
+}
 function render(event) {
     if (event.sequence <= lastSequence) {
         return; // duplicate from reconnect or history overlap
     }
     if (lastSequence > 0 && event.sequence > lastSequence + 1) {
-        const gap = document.createElement("li");
-        gap.className = "gap";
-        gap.textContent = `missing events ${lastSequence + 1} to ${event.sequence - 1}`;
+        const gap = el("li", "gap", `missing events ${lastSequence + 1} to ${event.sequence - 1}`);
         timeline.append(gap);
     }
     lastSequence = event.sequence;
-    const row = document.createElement("li");
-    row.dataset.type = event.type;
-    const sequence = document.createElement("span");
-    sequence.className = "sequence";
-    sequence.textContent = `#${event.sequence}`;
-    const kind = document.createElement("span");
-    kind.className = "kind";
-    kind.textContent = event.type;
-    const text = document.createElement("span");
-    text.textContent = describe(event);
-    row.append(sequence, kind, text);
-    if (event.operation_id) {
-        const operation = document.createElement("code");
-        operation.textContent = event.operation_id;
-        row.append(operation);
-    }
-    for (const artifact of event.artifacts) {
-        if (!ARTIFACT_PATH.test(artifact.path)) {
+    events.push(event);
+    const row = buildRow(event);
+    rows.set(event.sequence, row);
+    timeline.append(row);
+    updateComponentCounts(components, events);
+}
+function markRows() {
+    for (const event of events) {
+        const row = rows.get(event.sequence);
+        if (!row) {
             continue;
         }
-        const link = document.createElement("a");
-        link.href = `/api/attempts/${encodeURIComponent(attemptId)}/artifacts/${artifact.path}`;
-        link.textContent = `${artifact.role} (${artifact.bytes} bytes)`;
-        row.append(link);
+        row.classList.toggle("selected", event.sequence === selectedSequence);
+        row.classList.toggle("match", activeComponent !== null && componentOf(event) === activeComponent);
     }
-    timeline.append(row);
+}
+function selectEvent(sequence) {
+    selectedSequence = sequence;
+    activeComponent = null;
+    markRows();
+    const event = events.find((item) => item.sequence === sequence);
+    if (event) {
+        void inspector.showEvent(events, event);
+    }
+}
+function selectComponent(id) {
+    const component = COMPONENTS.find((item) => item.id === id);
+    if (!component) {
+        return;
+    }
+    activeComponent = id;
+    markRows();
+    const count = events.filter((event) => componentOf(event) === id).length;
+    void inspector.showComponent(component, count);
 }
 function follow() {
     const source = new EventSource(`/api/attempts/${encodeURIComponent(attemptId)}/stream?after=${lastSequence}`);
@@ -71,7 +104,12 @@ function follow() {
     };
     source.addEventListener("attempt-event", (message) => {
         const event = JSON.parse(message.data);
+        // Keep the inspector on the newest event only while the reader has not chosen another one.
+        const trackingLatest = selectedSequence === null || selectedSequence === lastSequence;
         render(event);
+        if (trackingLatest) {
+            selectEvent(event.sequence);
+        }
         if (event.type === "attempt_finished") {
             source.close();
             status.textContent = "finished";
@@ -92,8 +130,13 @@ async function start() {
         return;
     }
     attemptId = attempts[0].attempt_id;
+    inspector = new Inspector(attemptId, document.getElementById("inspector"), document.getElementById("state"), document.getElementById("evidence"));
+    buildComponentMap(components, selectComponent);
     const history = (await (await fetch(`/api/attempts/${encodeURIComponent(attemptId)}/events?after=0`)).json());
-    history.events.forEach(render);
+    history.events.forEach((event) => render(event));
+    if (events.length > 0) {
+        selectEvent(events[events.length - 1].sequence);
+    }
     if (history.events.some((event) => event.type === "attempt_finished")) {
         status.textContent = "finished";
         return;
@@ -103,4 +146,3 @@ async function start() {
 start().catch((error) => {
     status.textContent = `failed to load timeline: ${String(error)}`;
 });
-export {};

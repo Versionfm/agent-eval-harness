@@ -39,6 +39,31 @@ def read_then_complete_model() -> ScriptedModel:
     ])
 
 
+def workbench_model() -> ScriptedModel:
+    """Finite script that exercises every inspector field: truncated markup output, a failing
+    and a succeeding read in one turn, then a completion whose usage is not recorded."""
+    probe = "printf '<script>window.trackerProbe = true</script>\\n'; head -c 20000 /dev/zero | tr '\\0' x"
+    return ScriptedModel([
+        ModelResponse(
+            tool_calls=(ToolCall("run_shell", {"command": probe}, "shell-1"),),
+            reasoning_fields={"reasoning_content": "Probe the shell output before reading files."},
+            usage={"prompt_tokens": 11, "completion_tokens": 9},
+        ),
+        ModelResponse(
+            tool_calls=(
+                ToolCall("read_file", {"path": "app/missing.py"}, "read-missing"),
+                ToolCall("read_file", {"path": "app/source.py"}, "read-source"),
+            ),
+            reasoning_fields={"reasoning_content": "The first read failed; read the source file."},
+            usage={"prompt_tokens": 40, "completion_tokens": 7},
+        ),
+        ModelResponse(content="The shell output was truncated and the source file was read; stopping without a repair."),
+    ])
+
+
+SCENARIOS = {"read": read_then_complete_model, "workbench": workbench_model}
+
+
 def run_attempt(
     *,
     admission_evidence: Path,
@@ -46,10 +71,11 @@ def run_attempt(
     output_dir: Path,
     model: ScriptedModel | None = None,
     event_sink: AttemptEventSink | None = None,
+    scenario: str = "read",
 ) -> dict[str, Any]:
     return attempt_and_evaluate(
         admitted_task=AdmittedTask.from_evidence(admission_evidence, source_repository=source_repository),
-        model=model or read_then_complete_model(),
+        model=model or SCENARIOS[scenario](),
         model_config=ModelConfig(provider="scripted", requested_model="scripted-read-then-complete-v1"),
         budgets=AttemptBudgets(max_model_calls=4, shell_timeout_seconds=60),
         artifact_directory=output_dir,
@@ -69,6 +95,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, default=None,
                         help="new evidence directory (default: a timestamped one in the orchestration evidence tree)")
     parser.add_argument("--port", type=int, default=8765, help="loopback port; 0 picks a free one")
+    parser.add_argument("--scenario", choices=sorted(SCENARIOS), default="read",
+                        help="scripted model: read (one read, then complete) or workbench (every inspector field)")
     args = parser.parse_args(argv)
 
     output_dir = (args.output_dir or _default_output_directory()).expanduser().resolve()
@@ -80,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = run_attempt(
             admission_evidence=args.admission_evidence, source_repository=args.source_repository,
-            output_dir=output_dir, event_sink=recorder,
+            output_dir=output_dir, event_sink=recorder, scenario=args.scenario,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         server.shutdown()

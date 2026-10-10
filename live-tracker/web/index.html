@@ -3,16 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Live attempt timeline</title>
+  <title>Live attempt workbench</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header>
-    <h1>Live attempt timeline</h1>
+    <h1>Live attempt workbench</h1>
     <p id="status">connecting</p>
   </header>
-  <main>
-    <ol id="timeline" aria-live="polite"></ol>
+  <main class="workbench">
+    <nav id="components" aria-label="Components"></nav>
+    <section id="timeline-pane" aria-label="Timeline">
+      <ol id="timeline" aria-live="polite"></ol>
+    </section>
+    <aside id="inspector-pane" aria-label="Inspector">
+      <section id="inspector"><p class="note">Select a component or an event.</p></section>
+      <section id="state" aria-label="State at selected point"></section>
+      <section id="evidence" aria-label="Retained artifacts"></section>
+    </aside>
   </main>
   <script type="module" src="/static/dist/timeline.js"></script>
 </body>
