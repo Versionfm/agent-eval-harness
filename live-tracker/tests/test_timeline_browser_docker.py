@@ -24,9 +24,9 @@ SOURCE_REPOSITORY = os.environ.get(
     "ML_TUTOR_REPOSITORY", "/home/francisco/prompt-engineering-group-project"
 )
 
-COMPONENTS = [
-    "attempt", "python-loop", "model-request", "tool-execution",
-    "graph-model-node", "graph-tool-node", "graph-router",
+# The execution map nodes for the Python loop, in the order the map draws them.
+PYTHON_COMPONENTS = [
+    "attempt", "model-request", "tool-execution", "repository-capture", "candidate", "checks", "finish",
 ]
 
 EXPECTED_TYPES = [
@@ -149,15 +149,15 @@ class WorkbenchBrowserDockerTests(unittest.TestCase):
 
     def _check_component_navigation(self, page):
         components = page.eval_on_selector_all(
-            "#components button", "items => items.map(item => item.dataset.component)"
+            "#components g.wf-node", "items => items.map(item => item.dataset.component)"
         )
-        self.assertEqual(components, COMPONENTS)
-        page.click('#components button[data-component="python-loop"]')
-        self._wait_for_inspector(page, "Python loop: alternates")
+        self.assertEqual(components, PYTHON_COMPONENTS)
+        page.click('#components g.wf-node[data-component="model-request"]')
+        self._wait_for_inspector(page, "Model request phase")
         inspector = page.inner_text("#inspector")
         self.assertIn("agent_eval_harness/loop.py", inspector)
-        self.assertIn("Python loop: alternates", inspector)
-        self.assertIn("def run_python_loop(", page.inner_text("#inspector pre.source"))
+        self.assertIn("Model request phase", inspector)
+        self.assertIn("def _request_model_turn(", page.inner_text("#inspector pre.source"))
         self.assertEqual(page.locator("#inspector script").count(), 0)
 
     def _check_model_evidence(self, page):
@@ -242,16 +242,20 @@ class WorkbenchBrowserDockerTests(unittest.TestCase):
 
     def _check_graph_component_counts(self, page):
         counts = dict(page.eval_on_selector_all(
-            "#components button",
-            "items => items.map(item => [item.dataset.component, item.querySelector('.count').textContent])",
+            "#components g.wf-node",
+            "items => items.map(item => [item.dataset.component, item.dataset.count])",
         ))
-        # Model node: 3 steps, each entry, outcome and state. Tool node: 2 steps. Router: 5 decisions.
-        self.assertEqual(counts["graph-model-node"], "9")
-        self.assertEqual(counts["graph-tool-node"], "6")
+        # Model request: 3 model steps, each with node entry, model start, model outcome, node outcome and state
+        # (5 each; the termination record is not a node). Tool execution: 2 tool steps with entry, node outcome and
+        # state (3 each), plus 3 tool calls with start and outcome (2 each): 6 + 6 = 12. Router: 5 decisions.
+        # END: the one decision that ends the graph. Repository capture is the tool.capture record, not counted here.
+        self.assertEqual(counts["model-request"], "15")
+        self.assertEqual(counts["tool-execution"], "12")
         self.assertEqual(counts["graph-router"], "5")
+        self.assertEqual(counts["graph-end"], "1")
 
     def _check_graph_router_and_node_sources(self, page):
-        page.click('#components button[data-component="graph-router"]')
+        page.click('#components g.wf-node[data-component="graph-router"]')
         self._wait_for_inspector(page, "LangGraph router")
         inspector = page.inner_text("#inspector")
         self.assertIn("agent_eval_harness/langgraph_attempt.py", inspector)
