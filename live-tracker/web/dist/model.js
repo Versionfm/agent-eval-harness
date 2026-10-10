@@ -1,20 +1,42 @@
 // Event shapes and pure selection rules for the workbench. No DOM here.
 // Only server-validated artifact paths are ever fetched.
 export const ARTIFACT_PATH = /^artifacts\/[0-9a-f]{64}$/;
+// Graph node components point at the shared functions their nodes run. Graph events select them by
+// node name, and Python phases by source, so the shared identities never collide.
 export const COMPONENTS = [
     { id: "attempt", identity: "agent_eval_harness.attempt:attempt_and_evaluate", label: "Attempt lifecycle" },
     { id: "python-loop", identity: "agent_eval_harness.loop:run_python_loop", label: "Python loop" },
     { id: "model-request", identity: "agent_eval_harness.loop:_request_model_turn", label: "Model request" },
     { id: "tool-execution", identity: "agent_eval_harness.tools:execute_tool_turn", label: "Tool execution" },
+    { id: "graph-model-node", identity: "agent_eval_harness.loop:_request_model_turn", label: "LangGraph model_request node" },
+    { id: "graph-tool-node", identity: "agent_eval_harness.tools:execute_tool_turn", label: "LangGraph tool_execution node" },
+    { id: "graph-router", identity: "agent_eval_harness.langgraph_attempt:route_after_node", label: "LangGraph router" },
 ];
-const COMPONENT_BY_SOURCE = Object.fromEntries(COMPONENTS.map((component) => [component.identity, component.id]));
+const PHASE_COMPONENT = {
+    "agent_eval_harness.loop:_request_model_turn": "model-request",
+    "agent_eval_harness.tools:execute_tool_turn": "tool-execution",
+};
+const GRAPH_NODE_COMPONENT = {
+    model_request: "graph-model-node",
+    tool_execution: "graph-tool-node",
+};
+// Starts whose outcome may be missing; a missing outcome is shown as waiting or unresolved.
+export const OPERATION_STARTS = new Set(["node.enter", "model.start", "tool.start"]);
 // The component whose registered source function produced the event, or null.
 export function componentOf(event) {
     if (event.type === "phase.enter") {
-        return COMPONENT_BY_SOURCE[event.data.source] ?? null;
+        return PHASE_COMPONENT[event.data.source] ?? null;
+    }
+    if (event.type === "node.enter" || event.type === "node.outcome") {
+        return GRAPH_NODE_COMPONENT[event.data.node] ?? null;
+    }
+    if (event.type === "route.decision") {
+        return "graph-router";
     }
     if (event.type === "state") {
-        return "python-loop";
+        return event.data.after_node !== undefined
+            ? GRAPH_NODE_COMPONENT[event.data.after_node] ?? null
+            : "python-loop";
     }
     if (event.type.startsWith("model.")) {
         return "model-request";

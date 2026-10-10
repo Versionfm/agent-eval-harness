@@ -55,10 +55,49 @@ Reading the table: selecting `model-1`'s outcome shows no state, because no stat
 
 ## Components and source navigation
 
-The component map (left pane) lists four registered components. Selecting one shows its responsibility, its registered source function (file and line range) and the function's text. Phase events link to the same registered record. Only identities in `live_tracker.sources.REGISTERED_SOURCES` resolve; the server never serves an arbitrary path.
+The component map (left pane) lists the registered components. Selecting one shows its responsibility, its registered source function (file and line range) and the function's text. Phase and graph-node events link to the same registered record. Only identities in `live_tracker.sources.REGISTERED_SOURCES` resolve; the server never serves an arbitrary path.
+
+## LangGraph source walkthrough (#15)
+
+The LangGraph orchestrator runs the same model and tool functions as the Python loop. What differs is who decides the next step: the graph's edges instead of a `while` loop.
+
+| Concern | Python loop (`loop.py`) | LangGraph (`langgraph_attempt.py`) |
+|---|---|---|
+| Control flow | `run_python_loop`: `while`, one `phase.enter` per phase | `StateGraph` with nodes `model_request` and `tool_execution` and conditional edges |
+| Model turn | `_request_model_turn` (budgets, retries, `model.start`/`model.outcome`) | same function, called from the `model_request` node (`graph_model_step` in `attempt.py`) |
+| Tool turn | `execute_tool_turn` (`tool.start`/`tool.outcome`) | same function, called from the `tool_execution` node (`graph_tool_step` in `attempt.py`) |
+| Step counting | none; the model-call budget is the only bound | `counted` wraps each node: `graph_step_count` +1 per node run; separate cap `graph_step_limit` (`max_graph_steps` or `2 * max_model_calls + 1`) |
+| Routing | `run_python_loop` checks the stop reason and `response.tool_calls` | `route_after_node`: stop reason, then no model response or no tool calls, then the graph-step cap, else the other node |
+| Snapshot | `state` after each phase (`_selected_point_state`) | `state` after each node, with the same function and `after_node`, `graph_step_count` |
+
+Graph state (`AttemptGraphState`): `messages` uses the `operator.add` reducer, so each node returns only the messages it appended and the reducer concatenates them in order; `model_response`, `model_call_count`, `graph_step_count` and `termination_reason` are replaced by each node's update. Observer data never enters `messages`.
+
+Recorded events for one graph step (for example graph step 2, a tool node):
+
+1. `node.enter` (`operation_id: graph-step-2`, `node: tool_execution`, `graph_step_count: 2`, `source`). Recorded before the node runs, so a failed write stops the node.
+2. `tool.start` / `tool.outcome` (`tool-N-I`, parent `model-N`), exactly as in the Python loop.
+3. `node.outcome` (same operation id, with `termination_reason` when the node set one). A node that raised has no outcome; the workbench shows it as `unresolved` after the attempt finishes, never as completed.
+4. `state` (`after_node: tool_execution`, `graph_step_count`), built from the merged messages.
+5. `route.decision` (`after_node`, `next`, `reason`, `graph_step_count`, `max_graph_steps`, `source`). `next` is `end` when the graph stops; `reason` is `tool_calls`, `tool_results`, `no_tool_calls`, `no_model_response`, `graph_step_budget`, or the stop reason (for example `agent_completed`, `spending_budget`).
+
+Graph steps and model calls differ. The four-response repair script runs seven graph steps (four model nodes and three tool nodes) and four model calls. The model-call budget and the graph-step cap are separate budgets, and `graph_step_budget` appears only when the graph cap stops the run.
+
+Registered sources: `route_after_node`, plus the shared `_request_model_turn` and `execute_tool_turn` that the two node components point at.
+
+## No-provider experiment and overhead
+
+```bash
+# LangGraph attempt, scripted model: the same workbench scenario as the Python loop.
+PYTHONPATH=live-tracker/src python -m live_tracker.run_scripted --orchestrator langgraph --scenario workbench \
+  --admission-evidence <admission.json> --source-repository /path/to/prompt-engineering-group-project
+
+# Observed versus unobserved wall time per orchestrator (no provider; alternating order).
+PYTHONPATH=.:live-tracker/src python live-tracker/experiments/observation_overhead.py \
+  --admission-evidence <admission.json> --source-repository /path/to/prompt-engineering-group-project --repeats 3
+```
 
 ## Known limits
 
 - Provider reasoning is shown only as the `reasoning_content` field the provider returned.
-- The timeline shows state and phase events in the same sequence as the harness's calls; the LangGraph orchestrator is not observed (#15).
+- The timeline shows state and phase events in the same sequence as the harness's calls. The LangGraph orchestrator is observed through node and router events (#15); the two orchestrators differ in those events, not in the model/tool events.
 - The inspector shows a bounded presentation excerpt (2000 characters) of long output, labelled as an excerpt; the complete output is the linked artifact.
