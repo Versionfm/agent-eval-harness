@@ -167,3 +167,25 @@ Hosted provider settings, actual account access, latency, tool-call reliability,
    Recommendation: enabled at a modest supported effort, with a bounded output budget; keep the same setting in both harnesses and record whatever reasoning content the provider exposes.
 
 After these choices, prepare a concrete design and learning sequence for final shared-understanding confirmation. No model request or harness implementation has been executed.
+
+## Round 7 follow-up
+
+- Q28 accepted: thinking enabled at a modest supported effort and bounded output budget, with identical settings across orchestrators.
+- Q27 remains open. The user raised concerns about OpenRouter cache misses increasing cost and asked whether DeepSeek or a cheaper model should replace Qwen.
+
+## DeepSeek and caching source checks — 2026-10-10
+
+Sources:
+
+- https://api-docs.deepseek.com/quick_start/pricing/
+- https://api-docs.deepseek.com/guides/thinking_mode/
+- https://api-docs.deepseek.com/guides/kv_cache/
+- https://openrouter.ai/docs/guides/best-practices/prompt-caching
+
+DeepSeek's current `deepseek-flash` API maps to DeepSeek-V4.1-Flash and supports tool calls and thinking. Off-peak USD rates per million tokens: cache-hit input 0.003, cache-miss input 0.15, output 0.60. Peak rates are double. Current documentation defines weekends as off-peak. A hypothetical 100,000 fully uncached input plus 10,000 billed output token attempt costs USD 0.021 off-peak or USD 0.042 peak. Prices and model aliases may change; record observed model identity and pricing at run time.
+
+OpenRouter documents provider sticky routing and session identifiers to improve cache reuse, but these do not guarantee a hit. Manual provider ordering takes precedence over automatic stickiness. Cache reads, writes, and applicable rates depend on the backend. We have not measured this user's cache hit rate and cannot confirm a general claim of unusually frequent OpenRouter misses.
+
+New proposal, awaiting confirmation: start with DeepSeek-V4.1-Flash through the direct DeepSeek API, with thinking enabled at low effort. Keep Qwen as a later comparison. This reduces initial routing variables and offers low uncached token rates; actual repair quality, tool reliability, and latency require a smoke run.
+
+Record cached and uncached input, output/reasoning usage when exposed, retries, and actual or clearly labeled estimated cost in reports. Keep request prefixes stable when practical. Low-cost token pricing alone is not evidence of lower cost per successful repair.
