@@ -247,6 +247,7 @@ class DeepSeekModelAdapter:
             raise ValueError("DeepSeek base_url must use HTTPS")
         self._api_key = api_key.strip()
         self._transport = transport or UrllibJsonTransport()
+        self._execution_mode = "live_https" if transport is None else "controlled_transport"
         self._base_url = base_url.rstrip("/")
         self._spend_budget = spend_budget or SpendBudget(0.30)
         self._pricing_clock = pricing_clock or (lambda: datetime.now(timezone.utc))
@@ -266,6 +267,7 @@ class DeepSeekModelAdapter:
             "pricing_source_checked_at": PRICING_SOURCE_CHECKED_AT,
             "pricing_timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "transport_timeout": "ModelRequest.timeout_seconds applied to blocking HTTP I/O",
+            "execution_mode": self._execution_mode,
             "credential_location": "outer harness; excluded from attempt metadata and artifacts",
         }
 

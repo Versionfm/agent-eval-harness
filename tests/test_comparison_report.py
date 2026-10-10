@@ -35,6 +35,7 @@ class RecordedComparisonReportTests(unittest.TestCase):
                 "provider": "deepseek",
                 "requested_model": "deepseek-flash",
                 "model_settings": {"thinking": {"type": "enabled", "effort": "low"}},
+                "initial_context_sha256": "sha256:identical-initial-context",
                 "budgets": {"max_model_calls": 5},
                 "usage_by_call": [{
                     "prompt_tokens": 100,
@@ -199,6 +200,10 @@ class RecordedComparisonReportTests(unittest.TestCase):
             self.assertRegex(
                 rendered,
                 r"Orchestrator dependency versions</th><td><span class=\"status unknown\">unavailable</span>",
+            )
+            self.assertRegex(
+                rendered,
+                r"Initial effective context</th><td><span class=\"status good\">match</span>",
             )
 
             # A common mutable tag and differing built image IDs do not establish recipe parity.

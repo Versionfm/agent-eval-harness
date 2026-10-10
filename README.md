@@ -129,6 +129,16 @@ The mapping and framework boundary are documented in
 tool nodes, a message reducer, conditional routing, and START/END. It adds no
 checkpoint persistence or automatic context compaction.
 
+## Run the matched Python-loop and LangGraph comparison
+
+The bounded matched-run coordinator validates admitted-task and scripted-parity
+evidence, runs the provider smoke check first, and then uses one shared spend
+ledger for a fresh attempt under each orchestrator. It keeps provider or
+environment failures separate from valid repair outcomes. The exact reproduction
+command, artifact map, architecture walkthrough, and learning checkpoint are in
+[the matched-run guide](docs/MATCHED_RUN.md). The live comparison still needs a
+private credential-file path and a separate review of its actual attempt artifacts.
+
 ## Render a side-by-side report from saved attempts
 
 The comparison renderer reads existing attempt artifacts and performs no model
