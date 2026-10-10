@@ -27,6 +27,7 @@ _COMPARISON_FIELDS = (
     ("Observed model", ("observed_models",)),
     ("Model settings", ("model_settings",)),
     ("Orchestrator dependency versions", ("dependency_versions",)),
+    ("Harness revision", ("harness_revision",)),
     ("Attempt budgets", ("budgets",)),
     ("Pricing source", ("pricing_source_url", "pricing_source_checked_at")),
 )

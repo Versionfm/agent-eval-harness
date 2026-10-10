@@ -35,6 +35,15 @@ class RecordedComparisonReportTests(unittest.TestCase):
                 "provider": "deepseek",
                 "requested_model": "deepseek-flash",
                 "model_settings": {"thinking": {"type": "enabled", "effort": "low"}},
+                "dependency_versions": {
+                    "langgraph": "1.2.14",
+                    "pydantic": "2.12.5",
+                },
+                "harness_revision": {
+                    "commit": "deadbeef",
+                    "working_tree": "dirty",
+                    "working_tree_sha256": "sha256:shared-harness-tree",
+                },
                 "budgets": {"max_model_calls": 5},
                 "usage_by_call": [{
                     "prompt_tokens": 100,
@@ -198,7 +207,11 @@ class RecordedComparisonReportTests(unittest.TestCase):
             )
             self.assertRegex(
                 rendered,
-                r"Orchestrator dependency versions</th><td><span class=\"status unknown\">unavailable</span>",
+                r"Orchestrator dependency versions</th><td><span class=\"status good\">match</span>",
+            )
+            self.assertRegex(
+                rendered,
+                r"Harness revision</th><td><span class=\"status good\">match</span>",
             )
 
             # A common mutable tag and differing built image IDs do not establish recipe parity.
@@ -216,6 +229,26 @@ class RecordedComparisonReportTests(unittest.TestCase):
             self.assertRegex(
                 mismatch_rendered,
                 r"Task Dockerfile and runtime</th><td><span class=\"status bad\">mismatch</span>",
+            )
+
+            graph_metadata = json.loads(graph_metadata_path.read_text(encoding="utf-8"))
+            graph_metadata["dependency_versions"]["langgraph"] = "different-version"
+            graph_metadata["harness_revision"]["working_tree_sha256"] = "sha256:other-tree"
+            graph_metadata_path.write_text(json.dumps(graph_metadata), encoding="utf-8")
+            provenance_output = root / "provenance-mismatch.html"
+            self.assertEqual(main([
+                "--python-loop", str(python_attempt),
+                "--langgraph", str(graph_attempt),
+                "--output", str(provenance_output),
+            ]), 0)
+            provenance_rendered = provenance_output.read_text(encoding="utf-8")
+            self.assertRegex(
+                provenance_rendered,
+                r"Orchestrator dependency versions</th><td><span class=\"status bad\">mismatch</span>",
+            )
+            self.assertRegex(
+                provenance_rendered,
+                r"Harness revision</th><td><span class=\"status bad\">mismatch</span>",
             )
             self.assertIn("Diagnosis &lt;script&gt;alert(1)&lt;/script&gt;", rendered)
             self.assertNotIn("<script>alert(1)</script>", rendered)

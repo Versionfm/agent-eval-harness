@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -55,7 +56,9 @@ def build_task_environment(
     dockerfile_text = dockerfile_bytes.decode("utf-8")
     if f"FROM {expected_base_image}" not in dockerfile_text:
         raise EnvironmentFailure("Task Dockerfile does not use the manifest's pinned base image")
-    tag = "agent-eval-harness/ml-tutor-attempt:issue-3"
+    # Each worktree/run gets a stable reference that another local run cannot retag
+    # while this attempt still needs its image for independent evaluation.
+    tag = f"agent-eval-harness/ml-tutor-attempt:{uuid.uuid4().hex}"
     build = _run(
         [
             "docker", "build", "--network=none", "--pull=false", "--tag", tag,
@@ -75,15 +78,7 @@ def build_task_environment(
         "Docker server version query",
     )
     runtime = _require_success(
-        _run(
-            [
-                "docker", "run", "--rm", "--pull=never", "--network=none", "--read-only",
-                "--tmpfs", "/tmp:rw,noexec,nosuid,mode=1777,size=16m",
-                "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=64",
-                image_id, "python", "-c", "import platform; print(platform.python_version())",
-            ],
-            timeout=_bounded_timeout(60, deadline),
-        ),
+        _runtime_probe(image_id, deadline=deadline),
         "Prepared Python runtime probe",
     )
     if runtime != expected_python_version:
@@ -102,6 +97,21 @@ def build_task_environment(
         "build_status": "passed",
         "build_output_excerpt": (build_output + "\n" + (build.stderr or ""))[-1200:],
     }
+
+
+def _runtime_probe(image_id: str, *, deadline: float | None) -> subprocess.CompletedProcess:
+    name = f"agent-eval-runtime-{uuid.uuid4().hex}"
+    command = [
+        "docker", "run", "--rm", "--name", name, "--pull=never", "--network=none",
+        "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,mode=1777,size=16m",
+        "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=64",
+        image_id, "python", "-c", "import platform; print(platform.python_version())",
+    ]
+    try:
+        return _run(command, timeout=_bounded_timeout(60, deadline))
+    except EnvironmentFailure:
+        _force_remove_container(name)
+        raise
 
 
 def _run(
@@ -206,12 +216,33 @@ def _docker_command(command: list[str], *, timeout: float, input_text: str | Non
     return _run(command, timeout=timeout, input_text=input_text)
 
 
+def _force_remove_container(container_ref: str, *, timeout_seconds: float = 10) -> None:
+    """Synchronously stop and remove one container created by this harness."""
+    try:
+        result = _run(
+            ["docker", "rm", "--force", container_ref], timeout=timeout_seconds
+        )
+    except EnvironmentFailure as exc:
+        raise EnvironmentFailure(
+            f"Could not stop timed-out container {container_ref}: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "no Docker output").strip()
+        if "no such container" not in detail.casefold():
+            raise EnvironmentFailure(
+                f"Could not stop timed-out container {container_ref}: {detail[-1000:]}"
+            )
+
+
 class DockerTaskContainer:
     """One writable, network-isolated container for a single coding-agent attempt."""
 
-    def __init__(self, image: str, task_repository: Path):
+    def __init__(
+        self, image: str, task_repository: Path, *, task_mount_read_only: bool = False
+    ):
         self.image = image
         self.task_repository = task_repository.resolve()
+        self.task_mount_read_only = task_mount_read_only
         self.container_id: str | None = None
         self.configuration = {
             "network_mode": "none",
@@ -222,7 +253,8 @@ class DockerTaskContainer:
             "pids_limit": 128,
             "workdir": "/task",
             "task_mount_target": "/task",
-            "task_mount_read_only": False,
+            "task_mount_read_only": task_mount_read_only,
+            "evaluator_mount_present": False,
             "other_mounts": [],
             "canonical_evaluator_present": False,
             "credentials_or_container_socket_mounted": False,
@@ -237,7 +269,8 @@ class DockerTaskContainer:
                 "--network=none", "--read-only", "--tmpfs", self.configuration["tmpfs"],
                 "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=128",
                 "--user", f"{os.getuid()}:{os.getgid()}",
-                "--mount", f"type=bind,source={self.task_repository},target=/task",
+                "--mount", f"type=bind,source={self.task_repository},target=/task"
+                + (",readonly" if self.task_mount_read_only else ""),
                 "--workdir", "/task", "--env", "PYTHONPATH=/task",
                 "--env", "PYTHONDONTWRITEBYTECODE=1", self.image,
                 "python", "-c", "import time; time.sleep(86400)",
@@ -291,8 +324,9 @@ class DockerTaskContainer:
         }
         if observed["network_mode"] != "none" or not observed["root_filesystem_read_only"]:
             raise EnvironmentFailure("Task container inspection did not confirm network/root isolation")
-        if len(mounts) != 1 or mounts[0]["destination"] != "/task" or mounts[0]["read_only"]:
-            raise EnvironmentFailure("Task container does not have exactly one writable task-repository mount")
+        if (len(mounts) != 1 or mounts[0]["destination"] != "/task"
+                or mounts[0]["read_only"] != self.task_mount_read_only):
+            raise EnvironmentFailure("Task container does not have the expected task-repository mount")
         if any("docker.sock" in str(mount.get("source")) for mount in mounts):
             raise EnvironmentFailure("Engine socket appeared in the task container mounts")
         return observed
@@ -312,13 +346,22 @@ class DockerTaskContainer:
         input_text: str | None = None,
     ) -> subprocess.CompletedProcess:
         if self.container_id is None:
-            raise EnvironmentFailure("Task container is not running")
+            # A prior timed-out command removed the entire container to ensure
+            # its descendants could not mutate the mounted repository later.
+            self.start(timeout_seconds=max(30, min(timeout, 60)))
         interactive = ["-i"] if input_text is not None else []
-        return _docker_command(
-            ["docker", "exec", *interactive, "--workdir", "/task", self.container_id, *command],
-            timeout=timeout,
-            input_text=input_text,
-        )
+        try:
+            return _docker_command(
+                ["docker", "exec", *interactive, "--workdir", "/task", self.container_id, *command],
+                timeout=timeout,
+                input_text=input_text,
+            )
+        except CommandTimeout:
+            timed_out_id = self.container_id
+            if timed_out_id is not None:
+                _force_remove_container(timed_out_id)
+                self.container_id = None
+            raise
 
 
 def _tool_result(
@@ -467,42 +510,110 @@ def run_canonical_checks(
     *,
     timeout_seconds: float = 90,
 ) -> dict[str, Any]:
+    """Run candidate probes in isolation, then assert their observations here.
+
+    The candidate worker has only a read-only task mount. The evaluator's
+    canonical code runs in the outer harness after the worker exits, so imports,
+    stdout writes, and process termination in candidate code cannot print or
+    choose a functional verdict.
+    """
     configuration = {
         "network_mode": "none",
         "root_filesystem_read_only": True,
         "task_mount_read_only": True,
-        "evaluator_mount_read_only": True,
+        "evaluator_mount_present": False,
         "credentials_or_container_socket_mounted": False,
     }
-    command = [
-        "docker", "run", "--rm", "--pull=never", "--network=none", "--read-only",
-        "--tmpfs", "/tmp:rw,noexec,nosuid,mode=1777,size=16m",
-        "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=64",
-        "--mount", f"type=bind,source={candidate_repository.resolve()},target=/task,readonly",
-        "--mount", f"type=bind,source={evaluator_directory.resolve()},target=/evaluator,readonly",
-        "--workdir", "/task", "--env", "PYTHONPATH=/task", "--env",
-        "PYTHONDONTWRITEBYTECODE=1", image, "python", "/evaluator/checks.py",
-    ]
-    try:
-        result = _docker_command(command, timeout=timeout_seconds)
-    except EnvironmentFailure as exc:
-        return {"status": "error", "checks": {}, "error": str(exc), "container_configuration": configuration}
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "no evaluator output").strip()
-        return {"status": "error", "checks": {}, "error": detail[-2000:], "container_configuration": configuration}
-    try:
-        payload = json.loads(result.stdout.strip())
-    except json.JSONDecodeError as exc:
+    checker_path = evaluator_directory.resolve() / "checks.py"
+    if checker_path.is_symlink() or not checker_path.is_file():
         return {
             "status": "error", "checks": {},
-            "error": f"Canonical runner returned invalid JSON: {exc}",
-            "stdout": result.stdout[-2000:], "container_configuration": configuration,
-        }
-    if payload.get("python_version") != expected_python_version:
-        return {
-            "status": "error", "checks": {},
-            "error": f"Evaluator used Python {payload.get('python_version')!r}; expected {expected_python_version!r}.",
+            "error": f"Canonical evaluator checks are unavailable: {checker_path}",
             "container_configuration": configuration,
         }
-    payload["container_configuration"] = configuration
-    return payload
+    try:
+        spec = importlib.util.spec_from_file_location(
+            f"agent_eval_canonical_checks_{hashlib.sha256(str(checker_path).encode()).hexdigest()[:12]}",
+            checker_path,
+        )
+        if spec is None or spec.loader is None:
+            raise EnvironmentFailure("Could not load evaluator-owned canonical checks")
+        evaluator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(evaluator)
+        container = DockerTaskContainer(
+            image, candidate_repository, task_mount_read_only=True
+        )
+        worker_timeout: CommandTimeout | None = None
+        try:
+            try:
+                container.start(timeout_seconds=min(60, timeout_seconds))
+            except EnvironmentFailure as exc:
+                return {
+                    "status": "error", "checks": {},
+                    "error": f"Candidate evaluator worker could not start: {exc}",
+                    "container_configuration": configuration,
+                }
+            try:
+                worker_result = container.exec(
+                    ["python", "-"], timeout=timeout_seconds,
+                    input_text=evaluator.PROBE_SCRIPT,
+                )
+            except CommandTimeout as exc:
+                worker_timeout = exc
+            except EnvironmentFailure as exc:
+                return {
+                    "status": "error", "checks": {},
+                    "error": f"Candidate evaluator worker execution failed: {exc}",
+                    "container_configuration": configuration,
+                }
+        finally:
+            container.close(timeout_seconds=min(30, timeout_seconds))
+
+        if worker_timeout is not None:
+            payload = {
+                "worker_status": "candidate_error",
+                "error": f"candidate probe timed out after {worker_timeout.timeout_seconds}s",
+            }
+            evaluated = evaluator.evaluate_observations(
+                payload, expected_python_version=expected_python_version
+            )
+            evaluated["candidate_worker_stdout"] = worker_timeout.stdout[-2000:]
+            evaluated["candidate_worker_stderr"] = worker_timeout.stderr[-2000:]
+            evaluated["container_configuration"] = configuration
+            return evaluated
+    except EnvironmentFailure as exc:
+        return {"status": "error", "checks": {}, "error": str(exc), "container_configuration": configuration}
+    marker = "__AGENT_EVAL_OBSERVATIONS__"
+    records = [line[len(marker):] for line in worker_result.stdout.splitlines()
+               if line.startswith(marker)]
+    if worker_result.returncode != 0 or len(records) != 1:
+        detail = (worker_result.stderr or worker_result.stdout or
+                  "candidate worker did not return one observation record").strip()
+        payload = {
+            "worker_status": "candidate_error",
+            "error": detail[-2000:],
+        }
+    else:
+        try:
+            payload = json.loads(records[0])
+        except json.JSONDecodeError as exc:
+            payload = {
+                "worker_status": "candidate_error",
+                "error": f"candidate worker returned malformed observations: {exc}",
+            }
+    if not isinstance(payload, dict):
+        payload = {"worker_status": "candidate_error", "error": "candidate result was not an object"}
+    try:
+        evaluated = evaluator.evaluate_observations(
+            payload, expected_python_version=expected_python_version
+        )
+    except Exception as exc:
+        return {
+            "status": "error", "checks": {},
+            "error": f"Evaluator assertion failed: {type(exc).__name__}: {exc}",
+            "container_configuration": configuration,
+        }
+    evaluated["container_configuration"] = configuration
+    if worker_result.stderr:
+        evaluated["candidate_worker_stderr"] = worker_result.stderr[-2000:]
+    return evaluated

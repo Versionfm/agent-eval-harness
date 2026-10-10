@@ -5,7 +5,9 @@ from __future__ import annotations
 import html
 import json
 import math
+from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import quote
 
 
 def _pretty(value: Any) -> str:
@@ -60,6 +62,16 @@ def _usage_label(records: Any) -> str:
     )
 
 
+def _artifact_href(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    path = PurePosixPath(value)
+    if (path.is_absolute() or "\\" in value or any(ord(char) < 32 for char in value)
+            or any(part in {"", ".", ".."} for part in path.parts)):
+        return None
+    return html.escape(quote(path.as_posix(), safe="/"), quote=True)
+
+
 def render_attempt_report(result: dict[str, Any]) -> str:
     metadata = result.get("metadata", {})
     verdict = str(result.get("functional_verdict", "invalid_environment"))
@@ -69,7 +81,38 @@ def render_attempt_report(result: dict[str, Any]) -> str:
     )
 
     event_cards = []
-    for event in result.get("trace", []):
+    for index, event in enumerate(result.get("trace", []), 1):
+        event_id = event.get("event_id")
+        if not isinstance(event_id, int) or isinstance(event_id, bool) or event_id < 1:
+            event_id = index
+        event_anchor = f"event-{event_id}"
+        payload_anchor = f"{event_anchor}-payload"
+        links = []
+        if event.get("type") == "model":
+            links.append(
+                f'<a href="#{payload_anchor}">Open reasoning and response evidence</a>'
+            )
+        elif event.get("type") == "tool":
+            visible_anchor = f"{event_anchor}-visible"
+            full_anchor = f"{event_anchor}-full-output"
+            links.append(f'<a href="#{visible_anchor}">Open model-visible result</a>')
+            links.append(f'<a href="#{full_anchor}">Open full tool output</a>')
+            tool_result = event.get("result", {})
+            artifact = _artifact_href(
+                tool_result.get("output_artifact") if isinstance(tool_result, dict) else None
+            )
+            if artifact:
+                links.append(f'<a href="{artifact}">Open output artifact</a>')
+        elif event.get("type") == "patch_collection":
+            links.extend((
+                '<a href="#candidate-diff">Open candidate diff</a>',
+                '<a href="candidate.patch">Open candidate.patch</a>',
+            ))
+        elif event.get("type") == "evaluation":
+            links.extend((
+                '<a href="#canonical-checks">Open canonical checks</a>',
+                '<a href="checks.json">Open checks.json</a>',
+            ))
         event_type = html.escape(str(event.get("type", "event")))
         title = event_type.title()
         if event.get("type") == "tool":
@@ -82,15 +125,42 @@ def render_attempt_report(result: dict[str, Any]) -> str:
         truncation = ""
         visible_result = event.get("model_visible_result", {})
         if isinstance(visible_result, dict) and visible_result.get("truncated"):
-            output_artifact = event.get("result", {}).get("output_artifact", "unavailable")
+            output_artifact = event.get("result", {}).get("output_artifact")
+            artifact = _artifact_href(output_artifact)
+            artifact_link = (
+                f'<a href="{artifact}">{html.escape(str(output_artifact))}</a>'
+                if artifact else "unavailable"
+            )
             truncation = (
                 "<p class=\"unknown\">Model-visible output was truncated; full output artifact: "
-                f"{html.escape(str(output_artifact))}</p>"
+                f"{artifact_link}</p>"
+            )
+        event_links = (
+            '<p class="event-links">' + " · ".join(links) + "</p>" if links else ""
+        )
+        if event.get("type") == "tool":
+            visible_detail = (
+                f'<details id="{visible_anchor}"><summary>Exact model-visible result</summary><pre>'
+                + html.escape(_pretty(visible_result)) + "</pre></details>"
+                if isinstance(visible_result, dict) else ""
+            )
+            tool_result = event.get("result", {})
+            full_output = tool_result.get("output") if isinstance(tool_result, dict) else None
+            full_detail = (
+                f'<details id="{full_anchor}"><summary>Full retained tool output</summary><pre>'
+                + html.escape(str(full_output)) + "</pre></details>"
+                if full_output is not None else ""
+            )
+            payload_html = truncation + visible_detail + full_detail
+        else:
+            payload_html = truncation + (
+                f'<details id="{payload_anchor}"><summary>Recorded evidence</summary><pre>'
+                + html.escape(_pretty(event)) + "</pre></details>"
             )
         event_cards.append(
-            "<details class=\"event\"><summary>"
+            f'<details class="event" id="{event_anchor}"><summary>'
             f"<strong>{headline}</strong> <span>{status}</span> <small>{duration}</small>"
-            "</summary>" + truncation + "<pre>" + html.escape(_pretty(event)) + "</pre></details>"
+            "</summary>" + event_links + payload_html + "</details>"
         )
 
     evaluation = result.get("evaluation", {})
@@ -136,6 +206,8 @@ def render_attempt_report(result: dict[str, Any]) -> str:
     metadata_rows = {
         "Task": metadata.get("task_id", "unavailable"),
         "Source revision": metadata.get("source_revision", "unavailable"),
+        "Harness revision": _pretty(metadata.get("harness_revision", "unavailable")),
+        "Dependency versions": _pretty(metadata.get("dependency_versions", "unavailable")),
         "Model": metadata.get("requested_model", "unavailable"),
         "Observed model": ", ".join(metadata.get("observed_models", [])) or "unavailable",
         "Provider endpoint": metadata.get("provider_endpoint", "unavailable"),
@@ -205,8 +277,8 @@ def render_attempt_report(result: dict[str, Any]) -> str:
   {error_html}
   <h2>Initial context</h2>{initial}
   <h2>Attempt timeline</h2>{event_html}
-  <h2>Candidate patch</h2><pre>{html.escape(diff)}</pre>
-  <h2>Fresh canonical evaluation</h2>{check_table}
+  <h2 id="candidate-diff">Candidate patch</h2><pre>{html.escape(diff)}</pre>
+  <h2 id="canonical-checks">Fresh canonical evaluation</h2>{check_table}
   <p>{html.escape(cost_fallback)} Qualitative review pending.</p>
 </main></body></html>
 """
