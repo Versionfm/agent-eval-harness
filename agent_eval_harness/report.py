@@ -95,6 +95,7 @@ def render_attempt_report(result: dict[str, Any]) -> str:
         elif event.get("type") == "tool":
             visible_anchor = f"{event_anchor}-visible"
             full_anchor = f"{event_anchor}-full-output"
+            links.append(f'<a href="#{payload_anchor}">Open call arguments and result metadata</a>')
             links.append(f'<a href="#{visible_anchor}">Open model-visible result</a>')
             links.append(f'<a href="#{full_anchor}">Open full tool output</a>')
             tool_result = event.get("result", {})
@@ -139,19 +140,34 @@ def render_attempt_report(result: dict[str, Any]) -> str:
             '<p class="event-links">' + " · ".join(links) + "</p>" if links else ""
         )
         if event.get("type") == "tool":
+            tool_result = event.get("result", {})
+            tool_metadata = {
+                key: event.get(key)
+                for key in (
+                    "timestamp", "tool_name", "tool_call_id", "arguments", "status",
+                    "duration_seconds",
+                )
+            }
+            tool_metadata["result"] = (
+                {key: value for key, value in tool_result.items() if key != "output"}
+                if isinstance(tool_result, dict) else tool_result
+            )
+            call_detail = (
+                f'<details id="{payload_anchor}"><summary>Tool call arguments and result metadata</summary><pre>'
+                + html.escape(_pretty(tool_metadata)) + "</pre></details>"
+            )
             visible_detail = (
                 f'<details id="{visible_anchor}"><summary>Exact model-visible result</summary><pre>'
                 + html.escape(_pretty(visible_result)) + "</pre></details>"
                 if isinstance(visible_result, dict) else ""
             )
-            tool_result = event.get("result", {})
             full_output = tool_result.get("output") if isinstance(tool_result, dict) else None
             full_detail = (
                 f'<details id="{full_anchor}"><summary>Full retained tool output</summary><pre>'
                 + html.escape(str(full_output)) + "</pre></details>"
                 if full_output is not None else ""
             )
-            payload_html = truncation + visible_detail + full_detail
+            payload_html = truncation + call_detail + visible_detail + full_detail
         else:
             payload_html = truncation + (
                 f'<details id="{payload_anchor}"><summary>Recorded evidence</summary><pre>'

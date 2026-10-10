@@ -55,9 +55,13 @@ class SingleAttemptReportTests(unittest.TestCase):
                     "event_id": 2,
                     "type": "tool",
                     "tool_name": "run_shell",
+                    "tool_call_id": "shell-call-7",
+                    "arguments": {"command": "printf '<script>unsafe</script>'"},
                     "status": "ok",
                     "model_visible_result": {"output": "short", "truncated": True},
                     "result": {
+                        "exit_code": 7,
+                        "error_category": "command_failed",
                         "output": "full output <script>alert(1)</script>",
                         "output_artifact": "tool-results/event-0002.txt",
                     },
@@ -72,6 +76,7 @@ class SingleAttemptReportTests(unittest.TestCase):
 
         for href in (
             'href="#event-1-payload"',
+            'href="#event-2-payload"',
             'href="#event-2-visible"',
             'href="#event-2-full-output"',
             'href="tool-results/event-0002.txt"',
@@ -79,7 +84,12 @@ class SingleAttemptReportTests(unittest.TestCase):
             'href="#canonical-checks"',
         ):
             self.assertIn(href, rendered)
+        self.assertIn("shell-call-7", rendered)
+        self.assertIn("&quot;arguments&quot;", rendered)
+        self.assertIn("&quot;tool_call_id&quot;", rendered)
+        self.assertIn("&quot;exit_code&quot;: 7", rendered)
         self.assertNotIn("<script>alert(1)</script>", rendered)
+        self.assertNotIn("<script>unsafe</script>", rendered)
 
     def test_timeline_rejects_traversal_in_artifact_links(self):
         rendered = render_attempt_report({
