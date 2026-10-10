@@ -155,7 +155,7 @@ class WorkbenchBrowserDockerTests(unittest.TestCase):
         page.click('#components g.wf-node[data-component="model-request"]')
         self._wait_for_inspector(page, "Model request phase")
         inspector = page.inner_text("#inspector")
-        self.assertIn("agent_eval_harness/loop.py", inspector)
+        self.assertIn("agent_eval_harness/harness/loop.py", inspector)
         self.assertIn("Model request phase", inspector)
         self.assertIn("def _request_model_turn(", page.inner_text("#inspector pre.source"))
         self.assertEqual(page.locator("#inspector script").count(), 0)
@@ -222,9 +222,9 @@ class WorkbenchBrowserDockerTests(unittest.TestCase):
         self._wait_for_inspector(page, "def ")
         inspector = page.inner_text("#inspector")
         self.assertIn("tool_execution", inspector)
-        self.assertIn("agent_eval_harness.tools:execute_tool_turn", inspector)
+        self.assertIn("agent_eval_harness.harness.tools:execute_tool_turn", inspector)
         link = page.get_attribute('#inspector a[data-source]', "href")
-        self.assertIn("/api/sources?identity=agent_eval_harness.tools%3Aexecute_tool_turn", link)
+        self.assertIn("/api/sources?identity=agent_eval_harness.harness.tools%3Aexecute_tool_turn", link)
 
     def _check_graph_timeline(self, page):
         types = page.eval_on_selector_all(
@@ -258,7 +258,7 @@ class WorkbenchBrowserDockerTests(unittest.TestCase):
         page.click('#components g.wf-node[data-component="graph-router"]')
         self._wait_for_inspector(page, "LangGraph router")
         inspector = page.inner_text("#inspector")
-        self.assertIn("agent_eval_harness/langgraph_attempt.py", inspector)
+        self.assertIn("agent_eval_harness/harness/graph.py", inspector)
         self.assertIn("def route_after_node(", page.inner_text("#inspector pre.source"))
 
         page.locator('#timeline li[data-type="route.decision"]').nth(0).locator("button").click()
@@ -272,13 +272,13 @@ class WorkbenchBrowserDockerTests(unittest.TestCase):
         self.assertIn("next: end", page.inner_text("#inspector"))
 
         page.locator('#timeline li[data-type="node.enter"]').nth(1).locator("button").click()
-        self._wait_for_inspector(page, "agent_eval_harness.tools:execute_tool_turn")
+        self._wait_for_inspector(page, "agent_eval_harness.harness.tools:execute_tool_turn")
         inspector = page.inner_text("#inspector")
         self.assertIn("node: tool_execution", inspector)
         self.assertIn("graph_step_count: 2", inspector)
         self.assertIn("outcome: recorded at", inspector)
         link = page.get_attribute('#inspector a[data-source]', "href")
-        self.assertIn("/api/sources?identity=agent_eval_harness.tools%3Aexecute_tool_turn", link)
+        self.assertIn("/api/sources?identity=agent_eval_harness.harness.tools%3Aexecute_tool_turn", link)
 
     def _check_graph_model_and_tool_evidence(self, page, url):
         page.locator('#timeline li[data-type="model.outcome"]').nth(0).locator("button").click()

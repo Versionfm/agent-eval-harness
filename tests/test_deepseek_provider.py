@@ -2,9 +2,9 @@ import json
 from datetime import datetime, timezone
 import unittest
 
-from agent_eval_harness.deepseek import DeepSeekModelAdapter, HttpResponse, SpendBudget
-from agent_eval_harness.deepseek_smoke import run_smoke
-from agent_eval_harness.model import (
+from agent_eval_harness.harness.deepseek import DeepSeekModelAdapter, HttpResponse, SpendBudget
+from agent_eval_harness.cli.deepseek_smoke import run_smoke
+from agent_eval_harness.harness.model import (
     ModelConfig,
     ModelRequest,
     ProviderRequestError,

@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_eval_harness.compare_report import _load_attempt
-from agent_eval_harness.observation import json_artifact
+from agent_eval_harness.reports.compare_report import _load_attempt
+from agent_eval_harness.harness.hooks import json_artifact
 from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder
 from live_tracker.run_scripted import read_then_complete_model, run_attempt

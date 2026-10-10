@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agent_eval_harness.admit import run_admission
+from agent_eval_harness.cli.admit import run_admission
 
 
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"

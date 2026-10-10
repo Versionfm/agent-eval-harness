@@ -6,7 +6,7 @@ Every value a test asserts is a literal written here, so expectations never come
 import contextlib
 from pathlib import Path
 
-from agent_eval_harness.observation import EventRecordingError, json_artifact
+from agent_eval_harness.harness.hooks import EventRecordingError, json_artifact
 from live_tracker.recorder import AttemptRecorder, FaultyStorage
 
 
@@ -91,9 +91,9 @@ def build_docker_fixtures(root: Path, admission: Path, source: Path) -> dict[str
 
 
 WORKFLOW_ATTEMPT_ID = "workflow"  # the registry key the browser test serves each workflow recording under
-MODEL_SOURCE = "agent_eval_harness.loop:_request_model_turn"
-TOOL_SOURCE = "agent_eval_harness.tools:execute_tool_turn"
-ROUTER_SOURCE = "agent_eval_harness.langgraph_attempt:route_after_node"
+MODEL_SOURCE = "agent_eval_harness.harness.loop:_request_model_turn"
+TOOL_SOURCE = "agent_eval_harness.harness.tools:execute_tool_turn"
+ROUTER_SOURCE = "agent_eval_harness.harness.graph:route_after_node"
 
 
 def _python_workflow_events() -> list[tuple]:

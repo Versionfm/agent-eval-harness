@@ -40,18 +40,21 @@ export const ARTIFACT_PATH = /^(artifacts\/[0-9a-f]{64}|tool-results\/event-\d{4
 // The nodes of the execution map. Each identity is a registered source function (live_tracker/sources.py):
 // candidate collection, independent checks and finish are all recorded by attempt_and_evaluate.
 export const COMPONENTS: ComponentInfo[] = [
-  { id: "attempt", identity: "agent_eval_harness.attempt:attempt_and_evaluate", label: "Attempt lifecycle" },
-  { id: "model-request", identity: "agent_eval_harness.loop:_request_model_turn", label: "Model request" },
-  { id: "tool-execution", identity: "agent_eval_harness.tools:execute_tool_turn", label: "Tool execution" },
-  { id: "repository-capture", identity: "agent_eval_harness.tools:execute_tool_turn", label: "Repository capture" },
-  { id: "graph-router", identity: "agent_eval_harness.langgraph_attempt:route_after_node", label: "LangGraph router" },
-  { id: "graph-end", identity: "agent_eval_harness.langgraph_attempt:route_after_node", label: "LangGraph END" },
-  { id: "candidate", identity: "agent_eval_harness.attempt:attempt_and_evaluate", label: "Candidate collection" },
-  { id: "checks", identity: "agent_eval_harness.attempt:attempt_and_evaluate", label: "Independent checks" },
-  { id: "finish", identity: "agent_eval_harness.attempt:attempt_and_evaluate", label: "Finish" },
+  { id: "attempt", identity: "agent_eval_harness.bench.attempt:attempt_and_evaluate", label: "Attempt lifecycle" },
+  { id: "model-request", identity: "agent_eval_harness.harness.loop:_request_model_turn", label: "Model request" },
+  { id: "tool-execution", identity: "agent_eval_harness.harness.tools:execute_tool_turn", label: "Tool execution" },
+  { id: "repository-capture", identity: "agent_eval_harness.harness.tools:execute_tool_turn", label: "Repository capture" },
+  { id: "graph-router", identity: "agent_eval_harness.harness.graph:route_after_node", label: "LangGraph router" },
+  { id: "graph-end", identity: "agent_eval_harness.harness.graph:route_after_node", label: "LangGraph END" },
+  { id: "candidate", identity: "agent_eval_harness.bench.attempt:attempt_and_evaluate", label: "Candidate collection" },
+  { id: "checks", identity: "agent_eval_harness.bench.attempt:attempt_and_evaluate", label: "Independent checks" },
+  { id: "finish", identity: "agent_eval_harness.bench.attempt:attempt_and_evaluate", label: "Finish" },
 ];
 
+// Saved recordings carry the source identities from before the layout move; both spellings map to the same node.
 const PHASE_COMPONENT: Record<string, string> = {
+  "agent_eval_harness.harness.loop:_request_model_turn": "model-request",
+  "agent_eval_harness.harness.tools:execute_tool_turn": "tool-execution",
   "agent_eval_harness.loop:_request_model_turn": "model-request",
   "agent_eval_harness.tools:execute_tool_turn": "tool-execution",
 };

@@ -2,11 +2,11 @@ import time
 import unittest
 from types import SimpleNamespace
 
-from agent_eval_harness.context import _context_size_bytes
-from agent_eval_harness.loop import (
+from agent_eval_harness.harness.context import _context_size_bytes
+from agent_eval_harness.harness.loop import (
     MODEL_PHASE_SOURCE, TOOL_PHASE_SOURCE, _request_model_turn, run_python_loop,
 )
-from agent_eval_harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
+from agent_eval_harness.harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
 
 
 class RecordingSink:

@@ -4,8 +4,8 @@ from pathlib import Path
 import shutil
 import tempfile
 
-from agent_eval_harness.admission import assess_admission, task_package_evidence
-from agent_eval_harness.attempt import AdmittedTask
+from agent_eval_harness.bench.admission import assess_admission, task_package_evidence
+from agent_eval_harness.bench.attempt import AdmittedTask
 
 
 CHECK_IDS = (

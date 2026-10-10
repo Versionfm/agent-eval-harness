@@ -68,7 +68,7 @@ Each stream tails its own log: a 0.2 s tick reads only the bytes appended since 
 
 ## Event boundary
 
-The harness publishes through an optional `event_sink` (`agent_eval_harness/observation.py`) passed to `attempt_and_evaluate`. Without it, behavior is unchanged. The sink receives `attempt_started`, `initial_context`, `model.start`/`model.outcome` (`model-N`), `tool.start`/`tool.outcome` (`tool-N-I`, parent `model-N`) and `attempt_finished` (with the candidate patch). The recorder owns sequence, timestamps, elapsed time and artifact digests. Starts are emitted before the provider or tool call, outside its exception handling, so a failed start stops the attempt before any further operation. Outcomes and artifacts are written and fsynced before the event is appended. Observer data never enters model messages.
+The harness publishes through an optional `event_sink` (`agent_eval_harness/harness/hooks.py`) passed to `attempt_and_evaluate`. Without it, behavior is unchanged. The sink receives `attempt_started`, `initial_context`, `model.start`/`model.outcome` (`model-N`), `tool.start`/`tool.outcome` (`tool-N-I`, parent `model-N`) and `attempt_finished` (with the candidate patch). The recorder owns sequence, timestamps, elapsed time and artifact digests. Starts are emitted before the provider or tool call, outside its exception handling, so a failed start stops the attempt before any further operation. Outcomes and artifacts are written and fsynced before the event is appended. Observer data never enters model messages.
 
 An observed attempt keeps one history (ADR 0005). The harness writes its log, the linked artifacts, and only `metadata.json`, `candidate.patch`, `candidate-files.json` and `checks.json` beside it. After the run, `live_tracker.projection.write_projection` saves `result.json`, `trace.jsonl` and `report.html` from the log; the log is never rewritten, and the comparison loader reads the directory unchanged. Unobserved attempts keep the harness's own `trace.jsonl`, `tool-results/`, `result.json` and `report.html`.
 
@@ -211,7 +211,7 @@ Doubts and deferred items:
 
 ## Live matched pair (#18)
 
-`live_tracker.run_matched` runs one fresh Python-loop and LangGraph pair through `agent_eval_harness.run_matched_comparison`, with one observed recorder per attempt. Each finished attempt is projected from its log (`result.json`, `trace.jsonl`, `report.html`) before the comparison report is built. The workbench serves both attempts, and `live-pair.json` retains the budgets, effective settings, pricing provenance, usage, estimated and reported cost, observer overhead, deadline use and pending Codex reviews.
+`live_tracker.run_matched` runs one fresh Python-loop and LangGraph pair through `agent_eval_harness.cli.run_matched_comparison`, with one observed recorder per attempt. Each finished attempt is projected from its log (`result.json`, `trace.jsonl`, `report.html`) before the comparison report is built. The workbench serves both attempts, and `live-pair.json` retains the budgets, effective settings, pricing provenance, usage, estimated and reported cost, observer overhead, deadline use and pending Codex reviews.
 
 Budgets: combined USD 0.10 ceiling, smoke USD 0.01, each repair attempt USD 0.04. The stage ceilings sum to 0.09, so the shared ledger is the enforced total. The validator requires each stage to admit one request at its output limit: 2,048 tokens reserve USD 0.0024576 at peak uncached rates, and the 512-token smoke reserves USD 0.0006144. Other settings are the first live pair's (10 model calls, 128 KiB context, 600 s deadline, 60 s shell timeout). At peak rates a request body near the 128 KiB context limit reserves about USD 0.039 of input, so such a request can be refused as `spending_budget` before the context budget is reached. The first live pair estimated USD 0.0082 (Python loop, 8 calls) and USD 0.0047 (LangGraph, 10 calls), so a normal pair should sit well inside the ceiling.
 
@@ -223,7 +223,7 @@ ROOT=/home/francisco/Documents/Codex/2026-10-10/d/outputs/agent-eval-harness
 ADMISSION=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/final/admission/admission.json
 PARITY=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/live-tracker-2026-10-10-parity
 cd "$ROOT"
-"$PYTHON" -m agent_eval_harness.run_langgraph_parity --admission-evidence "$ADMISSION" \
+"$PYTHON" -m agent_eval_harness.cli.run_langgraph_parity --admission-evidence "$ADMISSION" \
   --source-repository /home/francisco/prompt-engineering-group-project --output-dir "$PARITY"
 ```
 

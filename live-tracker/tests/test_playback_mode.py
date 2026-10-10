@@ -27,19 +27,20 @@ LEGACY_ROOT = Path(os.environ.get(
 ))
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 FORBIDDEN_MODULES = {
-    "agent_eval_harness.attempt", "agent_eval_harness.deepseek", "agent_eval_harness.environment",
-    "agent_eval_harness.tools", "agent_eval_harness.loop", "agent_eval_harness.langgraph_attempt",
-    "agent_eval_harness.builtins", "agent_eval_harness.evaluation", "agent_eval_harness.admit",
+    "agent_eval_harness.bench.attempt", "agent_eval_harness.harness.deepseek", "agent_eval_harness.bench.environment",
+    "agent_eval_harness.harness.permissions", "agent_eval_harness.harness.tools", "agent_eval_harness.harness.loop",
+    "agent_eval_harness.harness.graph", "agent_eval_harness.harness.builtins", "agent_eval_harness.bench.evaluation",
+    "agent_eval_harness.cli.admit",
 }
 BOUNDARIES = [
-    ("agent_eval_harness.model", "ScriptedModel", "complete"),
-    ("agent_eval_harness.deepseek", "DeepSeekModelAdapter", "complete"),
-    ("agent_eval_harness.deepseek", "UrllibJsonTransport", "post_json"),
-    ("agent_eval_harness.deepseek", None, "urlopen"),
-    ("agent_eval_harness.environment", "DockerTaskContainer", "exec"),
-    ("agent_eval_harness.tools", None, "_dispatch_tool"),
-    ("agent_eval_harness.tools", None, "execute_tool_turn"),
-    ("agent_eval_harness.loop", None, "_request_model_turn"),
+    ("agent_eval_harness.harness.model", "ScriptedModel", "complete"),
+    ("agent_eval_harness.harness.deepseek", "DeepSeekModelAdapter", "complete"),
+    ("agent_eval_harness.harness.deepseek", "UrllibJsonTransport", "post_json"),
+    ("agent_eval_harness.harness.deepseek", None, "urlopen"),
+    ("agent_eval_harness.harness.permissions", "DockerTaskContainer", "exec"),
+    ("agent_eval_harness.harness.tools", None, "_dispatch_tool"),
+    ("agent_eval_harness.harness.tools", None, "execute_tool_turn"),
+    ("agent_eval_harness.harness.loop", None, "_request_model_turn"),
 ]
 
 

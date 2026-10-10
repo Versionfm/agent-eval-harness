@@ -9,12 +9,12 @@ from unittest import mock
 import unittest
 from pathlib import Path
 
-from agent_eval_harness import run_matched_comparison as coordinator
-from agent_eval_harness.attempt import AttemptBudgets
-from agent_eval_harness.deepseek import DeepSeekModelAdapter, HttpResponse, SpendBudget
-from agent_eval_harness.loop import _request_model_turn
-from agent_eval_harness.model import ModelConfig, ModelRequest, RequestBudgetExceeded
-from agent_eval_harness.run_matched_comparison import _validate_budget_limits, run_matched_comparison
+from agent_eval_harness.cli import run_matched_comparison as coordinator
+from agent_eval_harness.bench.attempt import AttemptBudgets
+from agent_eval_harness.harness.deepseek import DeepSeekModelAdapter, HttpResponse, SpendBudget
+from agent_eval_harness.harness.loop import _request_model_turn
+from agent_eval_harness.harness.model import ModelConfig, ModelRequest, RequestBudgetExceeded
+from agent_eval_harness.cli.run_matched_comparison import _validate_budget_limits, run_matched_comparison
 from tests.test_matched_comparison import write_inputs
 from tests.test_matched_comparison_docker import MatchedRepairTransport
 

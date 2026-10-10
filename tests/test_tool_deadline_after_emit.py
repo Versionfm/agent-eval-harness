@@ -5,8 +5,8 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_eval_harness import tools
-from agent_eval_harness.model import ModelResponse, ToolCall
+from agent_eval_harness.harness import tools
+from agent_eval_harness.harness.model import ModelResponse, ToolCall
 
 
 class SlowStartSink:

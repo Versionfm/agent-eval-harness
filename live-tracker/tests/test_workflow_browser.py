@@ -156,7 +156,7 @@ class WorkflowMapBrowserTests(unittest.TestCase):
         page.click('#components g.wf-node[data-component="model-request"]')
         self.assertEqual(self.match_rows(page), [3, 4, 5, 6, 12, 13, 14, 15])
         page.wait_for_function(
-            "document.querySelector('#inspector').innerText.includes('agent_eval_harness.loop:_request_model_turn')",
+            "document.querySelector('#inspector').innerText.includes('agent_eval_harness.harness.loop:_request_model_turn')",
             timeout=20_000,
         )
 
@@ -165,7 +165,7 @@ class WorkflowMapBrowserTests(unittest.TestCase):
         self.assertEqual(self.match_rows(page), [7, 8, 9, 11])
         # The inspector loads the registered source asynchronously: wait for the new identity to appear.
         page.wait_for_function(
-            "document.querySelector('#inspector').innerText.includes('agent_eval_harness.tools:execute_tool_turn')",
+            "document.querySelector('#inspector').innerText.includes('agent_eval_harness.harness.tools:execute_tool_turn')",
             timeout=20_000,
         )
 

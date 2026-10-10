@@ -9,8 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_eval_harness.compare_report import _load_attempt, build_comparison_report
-from agent_eval_harness.persistence import _collect_artifacts
+from agent_eval_harness.reports.compare_report import _load_attempt, build_comparison_report
+from agent_eval_harness.bench.artifacts import _collect_artifacts
 from attempt_fixtures import CHECKS, PATCH, record_attempt
 from live_tracker.projection import write_projection
 

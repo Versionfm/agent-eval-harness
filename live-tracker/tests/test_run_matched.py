@@ -2,14 +2,14 @@
 
 import unittest
 
-from agent_eval_harness.deepseek import (
+from agent_eval_harness.harness.deepseek import (
     PRICING_SOURCE_CHECKED_AT,
     PRICING_SOURCE_URL,
     USD_PER_MILLION_OFFPEAK,
     USD_PER_MILLION_PEAK,
 )
-from agent_eval_harness.observation import EventRecordingError
-from agent_eval_harness import run_matched_comparison as coordinator
+from agent_eval_harness.harness.hooks import EventRecordingError
+from agent_eval_harness.cli import run_matched_comparison as coordinator
 from live_tracker import run_matched as pair
 
 

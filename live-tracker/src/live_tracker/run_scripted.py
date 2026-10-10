@@ -19,13 +19,13 @@ import time
 from typing import Any
 import uuid
 
-from agent_eval_harness.attempt import (
+from agent_eval_harness.bench.attempt import (
     DEFAULT_ADMISSION_EVIDENCE, DEFAULT_SOURCE_REPOSITORY, ORCHESTRATION_ROOT,
     AdmittedTask, AttemptBudgets, attempt_and_evaluate,
 )
-from agent_eval_harness.capture import CaptureLimits
-from agent_eval_harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
-from agent_eval_harness.observation import AttemptEventSink
+from agent_eval_harness.bench.capture import CaptureLimits
+from agent_eval_harness.harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
+from agent_eval_harness.harness.hooks import AttemptEventSink
 from live_tracker.reader import read_attempt_history
 from live_tracker.projection import write_projection
 from live_tracker.recorder import AttemptRecorder

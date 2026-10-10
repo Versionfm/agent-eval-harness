@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agent_eval_harness.attempt import (
+from agent_eval_harness.bench.attempt import (
     AdmittedTask,
     AttemptBudgets,
     ModelConfig,

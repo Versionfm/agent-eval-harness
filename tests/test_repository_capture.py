@@ -15,9 +15,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_eval_harness import capture as capture_module
-from agent_eval_harness.capture import CaptureLimits, RepositoryCapture
-from agent_eval_harness.environment import CommandTimeout
+from agent_eval_harness.bench import capture as capture_module
+from agent_eval_harness.bench.capture import CaptureLimits, RepositoryCapture
+from agent_eval_harness.harness.permissions import CommandTimeout
 
 
 class FakeContainer:
@@ -28,7 +28,7 @@ class FakeContainer:
 
 
 def _baseline(root: Path) -> dict[str, tuple[bytes, int]]:
-    from agent_eval_harness.evaluation import _snapshot_repository
+    from agent_eval_harness.bench.evaluation import _snapshot_repository
     return _snapshot_repository(root)
 
 

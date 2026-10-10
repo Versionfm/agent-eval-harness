@@ -1,6 +1,6 @@
 # First matched Python and LangGraph comparison
 
-The coordinator for ticket #8 is `python -m agent_eval_harness.run_matched_comparison`. It validates the admitted task and scripted parity evidence, runs a bounded DeepSeek tool-call smoke check, then starts one Python-loop attempt and one LangGraph attempt with the same task, provider settings, context policy, and per-attempt budgets. Each call to `attempt_and_evaluate` builds a fresh defective task copy and performs canonical evaluation in a separate fresh evaluator environment.
+The coordinator for ticket #8 is `python -m agent_eval_harness.cli.run_matched_comparison`. It validates the admitted task and scripted parity evidence, runs a bounded DeepSeek tool-call smoke check, then starts one Python-loop attempt and one LangGraph attempt with the same task, provider settings, context policy, and per-attempt budgets. Each call to `attempt_and_evaluate` builds a fresh defective task copy and performs canonical evaluation in a separate fresh evaluator environment.
 
 The first live HTTPS pair completed on 10 October 2026 at harness revision `5be6a3f7a5627ea3df9085e46a5d94e379df7ec2`, after fresh admission and all three scripted parity scenarios passed. Direct DeepSeek `deepseek-flash` smoke passed tool call and continuation. Both attempts and independent evaluations completed with matched effective settings, and root visually inspected the comparison and recorded reviews bound to the exact saved attempts.
 
@@ -30,13 +30,13 @@ ADMISSION=$EVIDENCE/admission/admission.json
 PARITY=$EVIDENCE/parity/comparison.json
 OUTPUT=$EVIDENCE/matched
 
-"$PYTHON" -m agent_eval_harness.admit \
+"$PYTHON" -m agent_eval_harness.cli.admit \
   --source-repository "$SOURCE" --output-dir "$EVIDENCE/admission"
-"$PYTHON" -m agent_eval_harness.run_langgraph_parity \
+"$PYTHON" -m agent_eval_harness.cli.run_langgraph_parity \
   --admission-evidence "$ADMISSION" --source-repository "$SOURCE" \
   --output-dir "$EVIDENCE/parity"
 
-"$PYTHON" -m agent_eval_harness.run_matched_comparison \
+"$PYTHON" -m agent_eval_harness.cli.run_matched_comparison \
   --credential-file /home/francisco/.config/agent-eval-harness/deepseek-api-key.txt \
   --admission-evidence "$ADMISSION" \
   --parity-evidence "$PARITY" \
@@ -49,7 +49,7 @@ The output directory must not already exist. The command checks that the admissi
 To regenerate the scripted prerequisite, select a new output directory because parity runs preserve their artifacts and refuse to overwrite an existing run:
 
 ```bash
-"$PYTHON" -m agent_eval_harness.run_langgraph_parity \
+"$PYTHON" -m agent_eval_harness.cli.run_langgraph_parity \
   --admission-evidence "$ADMISSION" \
   --source-repository "$SOURCE" \
   --output-dir /home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/issue-6/reproduction
@@ -103,7 +103,7 @@ The two live conversations may produce different investigations, tool sequences,
 
 After a valid pair exists, read `experiment.json` first. Then compare each `metadata.json` for task revision, shared context fingerprint, model settings, dependency versions, budgets, and task image recipe; follow the model/tool events in `trace.jsonl`; inspect the full tool outputs, candidate patches, and independent check messages; finally review the paired HTML. Note where the model first makes a different choice and whether that choice changes the patch or only the path to it. Keep a repair failure separate from a provider, task-container, evaluator, or report failure.
 
-Complete the qualitative review only from these actual artifacts. Until then, leave both reports in the pending state. If review records are later prepared for these attempts, regenerate the report with `agent_eval_harness.compare_report --python-review ... --langgraph-review ...`; review records must identify the exact attempt and source revision.
+Complete the qualitative review only from these actual artifacts. Until then, leave both reports in the pending state. If review records are later prepared for these attempts, regenerate the report with `agent_eval_harness.reports.compare_report --python-review ... --langgraph-review ...`; review records must identify the exact attempt and source revision.
 
 No additional paid run was performed after this first pair. The next agreed one-variable harness experiment should change only `max_context_bytes` from 128 KiB to 64 KiB while keeping the task, model, prompts, tools, other budgets, orchestrators, and evaluator fixed. It should reuse `attempt_and_evaluate`, its existing attempt artifacts, and the same independent evaluation boundary. Run enough paired repetitions to distinguish a context-limit effect from one stochastic response; do not treat a single follow-up pair as a ranking.
 

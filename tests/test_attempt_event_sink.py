@@ -2,11 +2,11 @@ import time
 import unittest
 from unittest import mock
 
-from agent_eval_harness import tools
-from agent_eval_harness.attempt import AttemptBudgets
-from agent_eval_harness.loop import _request_model_turn
-from agent_eval_harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
-from agent_eval_harness.tools import execute_tool_turn
+from agent_eval_harness.harness import tools
+from agent_eval_harness.bench.attempt import AttemptBudgets
+from agent_eval_harness.harness.loop import _request_model_turn
+from agent_eval_harness.harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
+from agent_eval_harness.harness.tools import execute_tool_turn
 
 
 class RecordingSink:

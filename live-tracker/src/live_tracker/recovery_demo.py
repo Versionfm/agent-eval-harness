@@ -15,7 +15,7 @@ from pathlib import Path
 import sys
 import tempfile
 
-from agent_eval_harness.observation import EventRecordingError
+from agent_eval_harness.harness.hooks import EventRecordingError
 from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder, FaultyStorage
 
