@@ -1,22 +1,16 @@
 // Workbench entry point (layout A): component map, chronological timeline and inspector.
-// The saved history plus SSE feed one attempt. Evidence is written with textContent only.
+// The saved history plus SSE feed one attempt (connection.ts owns delivery). Evidence is written with textContent only.
 
 import { buildComponentMap, updateComponentCounts } from "./components.js";
+import { Accepted, Progress, Recording, follow } from "./connection.js";
 import { el } from "./dom.js";
 import { Inspector } from "./inspector.js";
 import { COMPONENTS, TrackerEvent, componentOf } from "./model.js";
 
-interface Recording {
-  state: "empty" | "open" | "interrupted" | "complete" | "failed" | "corrupt";
-  verified_events: number;
-  torn_tail_bytes: number;
-  unresolved_operations: string[];
-  problems: { kind: string; sequence: number | null; detail: string }[];
-  failure: { error: string; failed_event_type?: string } | null;
-}
-
 const timeline = document.getElementById("timeline") as HTMLOListElement;
 const status = document.getElementById("status") as HTMLElement;
+const detail = document.getElementById("detail") as HTMLElement;
+const lag = document.getElementById("lag") as HTMLElement;
 const components = document.getElementById("components") as HTMLElement;
 const banner = el("p", "note");
 banner.id = "recording";
@@ -24,7 +18,6 @@ banner.setAttribute("role", "status");
 banner.hidden = true;
 status.after(banner);
 
-let attemptId = "";
 let inspector: Inspector;
 const events: TrackerEvent[] = [];
 const rows = new Map<number, HTMLLIElement>();
@@ -118,14 +111,20 @@ function buildRow(event: TrackerEvent): HTMLLIElement {
   return row;
 }
 
-function render(event: TrackerEvent): void {
-  if (event.sequence <= lastSequence) {
-    return; // duplicate from reconnect or history overlap
+// Only accepted events reach the timeline: duplicates are dropped by the ledger, gaps and conflicts are explicit rows.
+function onAccepted(event: TrackerEvent, accepted: Accepted): void {
+  if (accepted.kind === "duplicate") {
+    return;
   }
-  if (lastSequence > 0 && event.sequence > lastSequence + 1) {
-    const gap = el("li", "gap", `missing events ${lastSequence + 1} to ${event.sequence - 1}`);
-    timeline.append(gap);
+  if (accepted.kind === "conflict") {
+    timeline.append(el("li", "conflict", `evidence conflict: ${accepted.message}`));
+    return;
   }
+  if (accepted.gap) {
+    timeline.append(el("li", "gap", `missing events ${accepted.gap[0]} to ${accepted.gap[1]}`));
+  }
+  // Keep the inspector on the newest event only while the reader has not chosen another one.
+  const trackingLatest = selectedSequence === null || selectedSequence === lastSequence;
   lastSequence = event.sequence;
   events.push(event);
   const row = buildRow(event);
@@ -133,6 +132,17 @@ function render(event: TrackerEvent): void {
   timeline.append(row);
   labelOperations();
   updateComponentCounts(components, events);
+  if (trackingLatest) {
+    selectEvent(event.sequence);
+  }
+}
+
+function onProgress(progress: Progress): void {
+  status.textContent = progress.state;
+  status.dataset.state = progress.state;
+  detail.textContent = progress.detail;
+  const behind = Math.max(progress.latest - progress.displayed, 0);
+  lag.textContent = `displayed #${progress.displayed} · latest #${progress.latest} · lag ${behind}`;
 }
 
 function markRows(): void {
@@ -167,46 +177,13 @@ function selectComponent(id: string): void {
   void inspector.showComponent(component, count);
 }
 
-function follow(): void {
-  const source = new EventSource(
-    `/api/attempts/${encodeURIComponent(attemptId)}/stream?after=${lastSequence}`
-  );
-  source.onopen = () => {
-    status.textContent = "live";
-  };
-  source.addEventListener("attempt-event", (message) => {
-    const event = JSON.parse((message as MessageEvent).data) as TrackerEvent;
-    // Keep the inspector on the newest event only while the reader has not chosen another one.
-    const trackingLatest = selectedSequence === null || selectedSequence === lastSequence;
-    render(event);
-    if (trackingLatest) {
-      selectEvent(event.sequence);
-    }
-    if (event.type === "attempt_finished") {
-      source.close();
-      status.textContent = "finished";
-    }
-  });
-  source.addEventListener("recording-status", (message) => {
-    const next = JSON.parse((message as MessageEvent).data) as Recording;
-    applyRecording(next);
-    if (next.state === "failed" || next.state === "corrupt") {
-      source.close();
-      status.textContent = "recording stopped";
-    }
-  });
-  source.onerror = () => {
-    status.textContent = source.readyState === EventSource.CLOSED ? "closed" : "reconnecting";
-  };
-}
-
 async function start(): Promise<void> {
   const attempts = (await (await fetch("/api/attempts")).json()) as { attempt_id: string }[];
   if (attempts.length === 0) {
     status.textContent = "no attempts registered";
     return;
   }
-  attemptId = attempts[0].attempt_id;
+  const attemptId = attempts[0].attempt_id;
   inspector = new Inspector(
     attemptId,
     document.getElementById("inspector") as HTMLElement,
@@ -214,24 +191,7 @@ async function start(): Promise<void> {
     document.getElementById("evidence") as HTMLElement,
   );
   buildComponentMap(components, selectComponent);
-  const history = (await (await fetch(`/api/attempts/${encodeURIComponent(attemptId)}/events?after=0`)).json()) as {
-    events: TrackerEvent[];
-    recording: Recording;
-  };
-  history.events.forEach((event) => render(event));
-  applyRecording(history.recording);
-  if (events.length > 0) {
-    selectEvent(events[events.length - 1].sequence);
-  }
-  if (history.events.some((event) => event.type === "attempt_finished")) {
-    status.textContent = "finished";
-    return;
-  }
-  if (history.recording.state === "failed" || history.recording.state === "corrupt") {
-    status.textContent = "recording stopped";
-    return;
-  }
-  follow();
+  follow(attemptId, { onAccepted, onProgress, onRecording: applyRecording });
 }
 
 start().catch((error: unknown) => {

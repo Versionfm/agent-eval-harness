@@ -65,16 +65,14 @@ def _record_problem(event: Any, sequence: int, attempt_id: str | None,
         return _problem("identity_conflict", sequence, "attempt id differs from the first record")
     if not isinstance(event.get("type"), str) or not isinstance(event.get("artifacts", []), list):
         return _problem("malformed", sequence, "record has no event type or artifact list")
+    # Only a repeated operation identity is a conflict. Records without one, and outcomes whose start
+    # is absent, are shown as recorded: they cannot be paired, so they are never reported unresolved.
     operation = event.get("operation_id")
-    if event["type"].endswith(".start"):
-        if not isinstance(operation, str):
-            return _problem("identity_conflict", sequence, "start record has no operation id")
+    if isinstance(operation, str) and event["type"].endswith(".start"):
         if operation in starts:
             return _problem("identity_conflict", sequence, f"operation {operation} started twice")
         starts[operation] = event["type"]
-    elif event["type"].endswith(".outcome"):
-        if operation not in starts:
-            return _problem("identity_conflict", sequence, f"outcome for {operation!r} has no start")
+    elif isinstance(operation, str) and event["type"].endswith(".outcome"):
         if operation in outcomes:
             return _problem("identity_conflict", sequence, f"operation {operation} has two outcomes")
         outcomes.add(operation)

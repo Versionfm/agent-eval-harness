@@ -99,14 +99,15 @@ class LoopbackServerTests(unittest.TestCase):
             [f"id: {self.attempt_id}:2", f"id: {self.attempt_id}:3"],
         )
         self.assertIn("attempt_finished", event_frames[-1])
-        self.assertIn("event: recording-status", frames[-1])
+        status_frames = [frame for frame in frames if "event: recording-status" in frame]
+        self.assertIn('"state": "complete"', status_frames[-1])
 
     def test_stream_reports_a_failed_recording_and_closes_without_waiting_for_a_finish(self):
         status, _, body = self._get("/api/attempts/att2/stream")
         self.assertEqual(status, 200)
         frames = [frame for frame in body.decode("utf-8").split("\n\n") if frame.strip()]
-        self.assertIn("event: recording-status", frames[-1])
-        self.assertIn('"state": "failed"', frames[-1])
+        status_frames = [frame for frame in frames if "event: recording-status" in frame]
+        self.assertIn('"state": "failed"', status_frames[-1])
 
 
     def test_serves_only_registered_source_identities(self):
