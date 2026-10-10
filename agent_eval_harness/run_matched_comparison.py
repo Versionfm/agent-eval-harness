@@ -9,7 +9,7 @@ import json
 import math
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Callable
 
 from agent_eval_harness.attempt import (
     AdmittedTask,
@@ -32,12 +32,14 @@ from agent_eval_harness.deepseek import (
     DeepSeekModelAdapter,
     JsonTransport,
     SpendBudget,
+    _max_request_cost_usd,
 )
 from agent_eval_harness.deepseek_smoke import (
     load_credential_file,
     run_smoke,
     write_smoke_artifact,
 )
+from agent_eval_harness.observation import AttemptEventSink
 
 
 DEFAULT_PARITY_EVIDENCE = (
@@ -52,6 +54,7 @@ DEFAULT_MAX_CONTEXT_BYTES = 128 * 1024
 DEFAULT_ATTEMPT_DEADLINE_SECONDS = 600.0
 DEFAULT_SHELL_TIMEOUT_SECONDS = 60
 DEFAULT_MAX_OUTPUT_TOKENS = 2048
+SMOKE_MAX_OUTPUT_TOKENS = 512
 REQUIRED_PARITY_SCENARIOS = {"correct", "error-recovery-budget", "graph-step-budget"}
 REQUIRED_PARITY_CHECKS = {
     "correct": {
@@ -182,6 +185,15 @@ def _validate_budget_limits(
         raise ValueError("shared budget must cover the smoke and both per-attempt ceilings")
     if not 1 <= max_output_tokens <= 8192:
         raise ValueError("max_output_tokens must be from 1 to 8192")
+    # Necessary condition for admission: one request reserving its full output limit must fit each stage.
+    for label, stage_usd, output_tokens in (
+        ("smoke", smoke_budget_usd, SMOKE_MAX_OUTPUT_TOKENS),
+        ("per-attempt", attempt_budget_usd, max_output_tokens),
+    ):
+        if stage_usd + 1e-12 < _max_request_cost_usd(0, output_tokens):
+            raise ValueError(
+                f"{label} budget cannot admit one request at the {output_tokens}-token output limit"
+            )
     return AttemptBudgets(
         max_model_calls=max_model_calls,
         shell_timeout_seconds=shell_timeout_seconds,
@@ -412,11 +424,17 @@ def run_matched_comparison(
     shell_timeout_seconds: int = DEFAULT_SHELL_TIMEOUT_SECONDS,
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     transport: JsonTransport | None = None,
+    event_sink_factory: Callable[[str, Path], AttemptEventSink] | None = None,
+    attempt_finished: Callable[[str, Path], None] | None = None,
 ) -> dict[str, Any]:
     """Validate prerequisites, smoke the provider, then run the two matched attempts.
 
     ``transport`` is the provider HTTP boundary and permits deterministic fixture runs.
     The normal command leaves it unset and uses the bounded HTTPS transport.
+    ``event_sink_factory(orchestrator, directory)`` may supply an observer for that attempt;
+    ``attempt_finished(orchestrator, directory)`` runs once the attempt directory exists, before
+    the comparison is built, so an observer can project its final records. Both are optional and
+    leave unobserved behavior unchanged.
     """
     execution_mode = "live_https" if transport is None else "controlled_transport"
     task = AdmittedTask.from_evidence(
@@ -470,7 +488,7 @@ def run_matched_comparison(
         "expected_observed_model": "DeepSeek-V4.1-Flash",
         "model_settings": dict(model_config.settings),
         "smoke": {
-            "max_output_tokens": 512,
+            "max_output_tokens": SMOKE_MAX_OUTPUT_TOKENS,
             "timeout_seconds": 20,
             "max_retries_per_turn": 1,
             "budget_usd": smoke_budget_usd,
@@ -529,7 +547,7 @@ def run_matched_comparison(
     smoke = run_smoke(
         adapter=smoke_adapter,
         timeout_seconds=20,
-        max_output_tokens=512,
+        max_output_tokens=SMOKE_MAX_OUTPUT_TOKENS,
         max_retries=1,
     )
     smoke_path = write_smoke_artifact(smoke, root / "smoke")
@@ -566,6 +584,8 @@ def run_matched_comparison(
             spend_budget=attempt_budget,
         )
         directory = root / orchestrator
+        sink = event_sink_factory(orchestrator, directory) if event_sink_factory else None
+        result: dict[str, Any] | None = None
         try:
             result = attempt_and_evaluate(
                 admitted_task=task,
@@ -574,8 +594,14 @@ def run_matched_comparison(
                 budgets=budgets,
                 artifact_directory=directory,
                 orchestrator=orchestrator,
+                event_sink=sink,
             )
         except KeyboardInterrupt:
+            result = None
+        finally:
+            if attempt_finished is not None and directory.is_dir():
+                attempt_finished(orchestrator, directory)
+        if result is None:
             return _finish_invalid(
                 root,
                 status="invalid_measurement",
