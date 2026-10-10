@@ -1,6 +1,6 @@
 # Coding-agent harness and evaluation design
 
-Status: active implementation design. Ticket #2 admitted the ML Tutor task and ticket #3 ran its first scripted repair on 2026-10-10; remaining slices retain their learning checkpoints. Interview decisions are recorded in [design-interview.md](design-interview.md).
+Status: active implementation design. Tickets #2–#4 admitted the ML Tutor task, ran the explicit loop, and preserved partial attempts; ticket #6 adds a deterministic LangGraph parity experiment on 2026-10-10. The matched live-provider comparison remains a separate checkpoint. Interview decisions are recorded in [design-interview.md](design-interview.md).
 
 ## Purpose and first milestone
 
@@ -35,6 +35,8 @@ Ticket #3 archives the full pinned source repository, applies the admitted defec
 
 Ticket #4 extends the same high-level `attempt_and_evaluate` path. Configurable limits cover model requests, serialized context bytes, command time, the attempt deadline, bounded provider retries, cleanup, and canonical evaluation. Values are recorded as proposals until calibrated; the retry count includes failed requests, and retry delay contributes to elapsed time. The attempt deadline is enforced across environment setup, blocking model calls, repository tools, and container cleanup. It reserves a configured cleanup window. Canonical evaluation has a separate timeout after agent execution stops so a working partial patch can still receive a verdict. A model request carries the current remaining time for future provider adapters; the generic synchronous wrapper bounds harness waiting, while an adapter with an HTTP transport should also apply that timeout to its request.
 
+Ticket #6 adds `orchestrator="langgraph"` beside the default `python-loop` at this same public seam. Both routes call the same model-turn helper and ordered tool-execution helper, then share task-container setup, context construction, tracing, patch collection, independent evaluation, and report artifacts. The LangGraph-only module defines `AttemptGraphState`, including an additive message reducer; wraps the shared functions as `model_request` and `tool_execution` nodes; and routes through conditional edges to the next node or `END`. `START` enters the model node. The compiled graph is invoked without a checkpointer or a prebuilt agent factory. The explicit Python loop owns those same transitions with a `while` branch. `graph_step_count` measures graph nodes, while `model_call_count` measures requests; these are not interchangeable. With no explicit graph-only cap, the node limit is `2 * max_model_calls + 1` and the LangGraph recursion limit is one greater, enough for one model and one tool node per permitted request plus the final model node that observes the shared request cap. If a graph-only cap is configured for a demonstration, its source and effective limit are recorded in metadata and the trace.
+
 Tool failures return status, output, error category, retryability, and exit status to the model. Requests in one response run sequentially in their declared order. The model sees bounded output with an explicit truncation marker; the full output is written to a separate attempt artifact and referenced from the trace. An interruption, provider failure, deadline, or budget stop still closes the task container, snapshots available files (including additions), and evaluates the patch. If collection is impossible, the candidate status explicitly says `unavailable`. Patch collection/application errors, canonical check failures, and environment failures have separate categories, while termination remains independent from functional verdict.
 
 ## Comparable orchestration
@@ -43,16 +45,15 @@ Both implementations will use identical tasks, prompts, adapter, tools, context 
 
 | Explicit Python | LangGraph counterpart | What to inspect |
 | --- | --- | --- |
-| Attempt state object | State schema | Which information survives each step. |
-| Call-model function | Model node | A node runs our function; it does not choose a model or prompt for us. |
-| Tool dispatch function | Tool-execution node | How tool requests become actions and structured results. |
-| Branch in the loop | Conditional edge | How the next node is selected. |
-| Updating messages and counters | State updates and reducers | Whether updates replace or accumulate existing values. |
-| Starting/stopping the loop | START/END and compiled graph | How the workflow is entered and terminated. |
+| `messages`, current response, request count, node count, termination | `AttemptGraphState` with an additive reducer for message updates | State meaning remains harness-defined; messages append while per-turn values replace prior ones. |
+| `_request_model_turn(...)` | `model_request` node | It invokes the same configured adapter and preserves provider reasoning fields; LangGraph does not choose our model or prompt. |
+| `_execute_tool_turn(...)` | `tool_execution` node | It dispatches repository tools sequentially, bounds visible output, and records identical trace events. |
+| `while` stop/continue checks | Conditional edges after each node | A response with tools routes to tool execution; completed, stopped, or budget-limited state routes to `END`. |
+| Enter the loop and exit it | `START`, `END`, and `StateGraph.compile()/invoke()` | LangGraph supplies graph execution; the harness still defines work, budgets, trace, and outcomes. |
 
 Use explicit nodes first rather than a prebuilt agent factory. Demonstrate checkpoint persistence and resume later, after orchestration parity, so their effects can be measured separately. Local traces are retained in both implementations; LangGraph checkpoints are a distinct concept from trace recording and model prompt caching.
 
-References checked on 2026-10-10: [Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api), [Persistence](https://docs.langchain.com/oss/python/langgraph/persistence).
+LangGraph is pinned at `1.2.14` in `requirements-langgraph.txt`; the complete resolved dependency set is pinned there for repeatable installation. The runnable comparison is `python -m agent_eval_harness.run_langgraph_parity`; it writes paired attempt artifacts and `comparison.json` outside the repository. References checked on 2026-10-10: [Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api), [Persistence](https://docs.langchain.com/oss/python/langgraph/persistence), and [LangGraph on PyPI](https://pypi.org/project/langgraph/).
 
 ## Initial model and context
 

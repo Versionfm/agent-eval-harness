@@ -1,6 +1,6 @@
 # Learning and implementation sequence
 
-Status: active. Slices 1–4 are implemented; inspect the admission and scripted attempt evidence before the live-model and LangGraph slices. Each slice includes a short explanation, an experiment the user can run, and an inspection checkpoint before expansion.
+Status: active. Slices 1–5 have deterministic implementations and inspectable evidence; the matched live-model comparison is still pending provider preflight and review. Each slice includes a short explanation, an experiment the user can run, and an inspection checkpoint before expansion.
 
 | Slice | Build and observe | Completion evidence |
 | --- | --- | --- |
@@ -8,7 +8,7 @@ Status: active. Slices 1–4 are implemented; inspect the admission and scripted
 | 2. Tools and trace | Run repository tools in a disposable container and capture successful, failed, truncated, and timed-out results. | **Complete:** ordered tool events expose errors; full output files remain alongside model-visible truncation. |
 | 3. Explicit Python loop | Follow model → tool → model transitions with scripted responses, then a small DeepSeek smoke call. | **Scripted path complete:** state, dispatch, request accounting, deadlines, retries, and provider-field preservation have offline coverage; live smoke remains for ticket #5. |
 | 4. Independent verdict and report | Evaluate a proposed patch in a fresh environment and inspect clean HTML. | **Complete:** correct, incorrect, invalid, environment-failed, interrupted, and budget-stopped attempts keep separate outcomes and artifacts. |
-| 5. LangGraph counterpart | Express the same model/tool functions as nodes with state updates and conditional edges. | Scripted parity checks pass; explain which responsibilities LangGraph supplies and which remain ours. |
+| 5. LangGraph counterpart | Express the same model/tool functions as nodes with state updates and conditional edges. | **Scripted parity complete:** actual task/evaluator Docker runs compare correct repair, error recovery plus common request-budget stop, reasoning-field continuation, and a separately configured graph-step stop. The runnable checkpoint writes paired reports and `comparison.json`; no paid live call is used. |
 | 6. First live comparison | Run both orchestrators on the admitted task with matched configuration. | Reproducible manifests, traces, diffs, verdicts, usage, and side-by-side report; review outcomes with the user. |
 | 7. Controlled harness experiments | Change one context/recovery/persistence choice at a time. | Explain behavior changes using traces and measurements on fixed tasks/models. |
 | 8. Broader benchmarks | Add tasks/repeats, Qwen, a local model after measured feasibility, and another repository. | Compare harness variants separately from model variants and report cost per successful task when enough observations exist. |
