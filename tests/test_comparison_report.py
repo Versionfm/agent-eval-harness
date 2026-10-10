@@ -354,6 +354,37 @@ class RecordedComparisonReportTests(unittest.TestCase):
                 ])
             self.assertEqual(error.exception.code, 2)
 
+    def test_title_falls_back_to_langgraph_task_when_python_metadata_has_no_task_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            metadata_by_attempt = {
+                "python-loop": {"orchestrator": "python-loop"},
+                "langgraph": {"orchestrator": "langgraph", "task_id": "ml_tutor_retrieval"},
+            }
+            for name, metadata in metadata_by_attempt.items():
+                directory = root / name
+                directory.mkdir()
+                (directory / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+                (directory / "trace.jsonl").write_text("", encoding="utf-8")
+                (directory / "result.json").write_text(
+                    json.dumps({"functional_verdict": "success", "termination_reason": "agent_completed"}),
+                    encoding="utf-8",
+                )
+                (directory / "candidate.patch").write_text("", encoding="utf-8")
+                (directory / "checks.json").write_text(json.dumps({"checks": {}}), encoding="utf-8")
+            output = root / "comparison.html"
+
+            self.assertEqual(main([
+                "--python-loop", str(root / "python-loop"),
+                "--langgraph", str(root / "langgraph"),
+                "--output", str(output),
+            ]), 0)
+
+            self.assertIn(
+                "<title>Attempt comparison · ml_tutor_retrieval</title>",
+                output.read_text(encoding="utf-8"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -654,7 +654,7 @@ def render_comparison_report(
         overview_items.append(f'<span class="status {css}">{count} {noun}</span>')
     overview = "".join(overview_items)
 
-    task = python_metadata.get("task_id") or langgraph_metadata.get("task_id") or "Recorded task comparison"
+    task = python_metadata.get("task_id") or graph_metadata.get("task_id") or "Recorded task comparison"
     return f"""<!doctype html>
 <html lang="en">
 <head>
