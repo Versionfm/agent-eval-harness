@@ -218,7 +218,7 @@ class PlaybackBrowserDockerTests(unittest.TestCase):
 
         # Every linked artifact serves exactly the bytes its recorded digest names.
         self._select(page, tool["sequence"])
-        for link in page.locator("a[data-artifact]").all():
+        for link in page.locator("#evidence a[data-artifact]").all():
             role = link.get_attribute("data-artifact")
             recorded = next(item for item in tool["artifacts"] if item["role"] == role)
             served = _fetch(f"{self.base}{link.get_attribute('href')}")

@@ -94,6 +94,8 @@ function describe(event) {
             return `${data.tool_name} started`;
         case "tool.outcome":
             return `${data.tool_name} ${data.status}` + (data.result?.error ? `: ${data.result.error}` : "");
+        case "tool.capture":
+            return `repository capture ${data.status}` + (data.reason ? ` (${data.reason})` : "");
         case "attempt_finished":
             return `attempt ${data.termination_reason}; verdict ${data.functional_verdict}`;
         default:

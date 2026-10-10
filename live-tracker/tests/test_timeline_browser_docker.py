@@ -31,9 +31,9 @@ COMPONENTS = [
 
 EXPECTED_TYPES = [
     "attempt_started", "initial_context",
-    # turn 1: model request, then one shell tool call
+    # turn 1: model request, then one shell tool call and its repository capture (#16)
     "phase.enter", "model.start", "model.outcome", "state",
-    "phase.enter", "tool.start", "tool.outcome", "state",
+    "phase.enter", "tool.start", "tool.outcome", "tool.capture", "state",
     # turn 2: one failing read and one succeeding read in the same model response
     "phase.enter", "model.start", "model.outcome", "state",
     "phase.enter", "tool.start", "tool.outcome", "tool.start", "tool.outcome", "state",
@@ -47,8 +47,8 @@ EXPECTED_GRAPH_TYPES = [
     "attempt_started", "initial_context",
     # graph step 1: model_request, then the router sends the tool call to tool_execution
     "node.enter", "model.start", "model.outcome", "node.outcome", "state", "route.decision",
-    # graph step 2: the shell tool call
-    "node.enter", "tool.start", "tool.outcome", "node.outcome", "state", "route.decision",
+    # graph step 2: the shell tool call and its repository capture (#16)
+    "node.enter", "tool.start", "tool.outcome", "tool.capture", "node.outcome", "state", "route.decision",
     # graph step 3: model_request asks for two reads, and the router sends them to tool_execution
     "node.enter", "model.start", "model.outcome", "node.outcome", "state", "route.decision",
     # graph step 4: tool_execution runs the failing and the succeeding read in order

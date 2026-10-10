@@ -81,6 +81,9 @@ def main(argv: list[str] | None = None) -> int:
                         "emit_seconds": round(sink.emit_seconds, 4) if sink else 0.0,
                         "emit_count": sink.emit_count if sink else 0,
                         "recorded_bytes": _directory_bytes(directory) if observed else 0,
+                        # Repository capture time, summed over the attempt's tool.capture events.
+                        "capture_seconds": (result["metadata"].get("repository_capture") or {}).get("capture_seconds", 0.0),
+                        "captures": (result["metadata"].get("repository_capture") or {}).get("captures", 0),
                     })
 
     summary = {}
@@ -97,6 +100,8 @@ def main(argv: list[str] | None = None) -> int:
             "events_per_attempt": on[0]["events"],
             "emits_per_attempt": on[0]["emit_count"],
             "recorded_kib_per_attempt": round(on[0]["recorded_bytes"] / 1024, 1),
+            "capture_mean_seconds": round(statistics.mean(run["capture_seconds"] for run in on), 4),
+            "captures_per_attempt": on[0]["captures"],
             "outcomes": sorted({f"{run['termination_reason']}/{run['functional_verdict']}" for run in runs
                                 if run["orchestrator"] == orchestrator}),
         }

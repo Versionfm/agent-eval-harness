@@ -1,6 +1,6 @@
 # Live tracker
 
-Dedicated home for live observation and recorded playback of harness attempts. Specification: [issue #10](https://github.com/Versionfm/agent-eval-harness/issues/10). Status: tickets [#11](https://github.com/Versionfm/agent-eval-harness/issues/11) (one scripted Python attempt observed live), [#12](https://github.com/Versionfm/agent-eval-harness/issues/12) (interrupted recordings and recorder-failure handling), [#13](https://github.com/Versionfm/agent-eval-harness/issues/13) (the workbench: component map, timeline and inspector), [#15](https://github.com/Versionfm/agent-eval-harness/issues/15) (LangGraph node, router and state transitions through the same sink and workbench) [#17](https://github.com/Versionfm/agent-eval-harness/issues/17) (reconnect, catch-up, bounded delivery and lag) and [#14](https://github.com/Versionfm/agent-eval-harness/issues/14) (playback, legacy adapter, final results and projected report) implemented. Mutation capture (#16) and the live comparison pair (#18) are deferred. The call chain and the selected-point experiment are in [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md).
+Dedicated home for live observation and recorded playback of harness attempts. Specification: [issue #10](https://github.com/Versionfm/agent-eval-harness/issues/10). Status: tickets [#11](https://github.com/Versionfm/agent-eval-harness/issues/11) (one scripted Python attempt observed live), [#12](https://github.com/Versionfm/agent-eval-harness/issues/12) (interrupted recordings and recorder-failure handling), [#13](https://github.com/Versionfm/agent-eval-harness/issues/13) (the workbench: component map, timeline and inspector), [#15](https://github.com/Versionfm/agent-eval-harness/issues/15) (LangGraph node, router and state transitions through the same sink and workbench) and [#17](https://github.com/Versionfm/agent-eval-harness/issues/17) (reconnect, catch-up, bounded delivery and lag) [#16](https://github.com/Versionfm/agent-eval-harness/issues/16) (repository changes after mutating tools) and [#14](https://github.com/Versionfm/agent-eval-harness/issues/14) (playback, legacy adapter, final results and projected report) implemented. The live comparison pair (#18) is deferred. The call chain and the selected-point experiment are in [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md).
 
 ## Reproduce the recovery behaviors (no provider, no Docker)
 
@@ -138,6 +138,69 @@ AGENT_EVAL_DOCKER_INTEGRATION=1 ML_TUTOR_ADMISSION_EVIDENCE=<admission.json> ML_
   PYTHONPATH=live-tracker/src python -m unittest discover -s live-tracker/tests -t live-tracker/tests
 ```
 
+
+## Repository changes after mutating tools (#16)
+
+Observed attempts only. After each `apply_patch` or `run_shell` that was dispatched, the harness emits `tool.capture` linked to the tool operation (`parent_operation_id` = `tool-N-I`). It describes the task repository relative to the attempt's starting repository: text diffs with additions and deletions, added and deleted files, and binary files as metadata only (path, sizes, sha256). The complete text diffs are in the linked `capture.json`; the event carries bounded previews. Captures never change the tool result, the model-visible messages or the canonical candidate, which is still collected by `collect_candidate` at the end. Unobserved attempts take no capture code path.
+
+Statuses, each labelled apart in the inspector:
+
+- `captured`: changes shown, with settlement.
+- `unsettled`: a process was still alive after the shell returned. No snapshot is taken and no change is shown; the live processes are listed.
+- `unavailable`: the settlement probe failed (not a limit), so no change is shown.
+- `omitted` with `byte_limit` or `time_limit`: a declared bounded omission. Not a failure.
+- `error`: the capture itself failed (for example a symbolic link in the repository). Not a limit and not a tool result.
+
+Settlement, the rule for when a capture may describe the repository:
+
+- Shell timed out and the container was force-removed: settled, because every process in it is gone.
+- `apply_patch` returned: settled, because its edit process has exited (no probe, as specified).
+- `run_shell` returned: not settled by return alone. A read-only probe (`python -c`, reading `/proc`) runs in the container and lists processes that are alive. PID 1 (the idle sleeper), zombies and the probe are not counted. Any other live process makes the capture `unsettled`. The probe signals nothing and does not change the tool's semantics. If it does not finish within the time limit, the capture is an `omitted` `time_limit`.
+
+Limits, passed as `CaptureLimits` and recorded in every `tool.capture` event and in `metadata.repository_capture`:
+
+| limit | value | reason |
+| --- | --- | --- |
+| `max_seconds` (probe and snapshot together) | 2.0 | Captures measured 14 to 191 ms on the pinned repository (about 10x headroom). |
+| `max_total_bytes` (repository content read per capture) | 4 MiB | The pinned task repository reads as 1.85 MB per capture (measured on all five captures), about 2.2x headroom. |
+| `max_preview_bytes` (diff preview per file) | 4 KiB | Scripted diffs are under 100 bytes, so this is a display choice, not a measured value. |
+
+Demo (no provider; Docker and the admitted task required). Partial mutation (successful patch, failing shell that changes two files, deletion, binary write, shell that writes then times out), then byte-limit, time-limit and settlement cases. It asserts each expectation and exits non-zero on a mismatch:
+
+```bash
+PYTHONPATH=live-tracker/src python -m live_tracker.capture_demo \
+  --admission-evidence <admission.json> --source-repository /path/to/prompt-engineering-group-project
+# ends with "capture demo passed: ..."
+```
+
+Settlement cases, and a caveat about the wording in the ticket. The literal writer `sh -c '(sleep 2; echo x > late.txt) &'` is settled, not unsettled: `docker exec` waits for the shell's output pipe, which the background `sleep` inherits, so the shell returns only after the writer exits. The probe confirms nothing is alive and the change is captured. The detached form `sh -c '(sleep 2; echo y > detached.txt) >/dev/null 2>&1 &'` returns at once with the writer alive, so it is the case that shows `unsettled`. Both are in the demo and `test_repository_capture_docker.py`.
+
+Tests:
+
+- `tests/test_repository_capture.py` (offline): text and binary descriptions, counts, previews, the linked artifact facts, settlement rules with a canned probe, the time-limit and probe-failure paths, byte-limit omission and symbolic-link error.
+- `live-tracker/tests/test_repository_capture_docker.py` (Docker): mutations linked to their tools and matching the files on disk; observed and unobserved parity of model-visible messages, candidate files and checks; the LangGraph tool node captures the same as the Python loop; background writers.
+- `live-tracker/tests/test_repository_capture_browser_docker.py` (Docker, system Chrome `channel="chrome"`): the inspector shows the captured change for the patch, with its `capture.json` link.
+- The workbench browser and LangGraph tests now expect the `tool.capture` after the shell outcome.
+
+Overhead (no provider, Docker, `mutations` scenario, 3 repeats, observed and unobserved alternating, 5 captures per attempt):
+
+```bash
+PYTHONPATH=.:live-tracker/src python live-tracker/experiments/observation_overhead.py \
+  --admission-evidence <admission.json> --source-repository <prompt-engineering-group-project> \
+  --scenario mutations --repeats 3
+```
+
+- Capture time per attempt (summed `capture_seconds`): 0.49 s python-loop and 0.55 s LangGraph, about 0.1 s per capture.
+- Recording time per attempt (time inside `emit`, including the capture events): 0.13 s python-loop and 0.15 s LangGraph.
+- Wall time, observed versus unobserved: python-loop 7.16 s versus 7.95 s; LangGraph 7.71 s versus 6.48 s. The attempts ranged from 6.2 to 10.0 s, so these differences are within run-to-run noise. Three repeats cannot separate the observed overhead from it, and the capture cost is about 0.1 s per capture. Larger repeats were not measured.
+
+Doubts and deferred items:
+
+- `apply_patch` is settled by its return, as specified. A background writer started by an earlier shell that is still running could therefore appear in an `apply_patch` capture. The capture is then not settled in the strict sense, and the final candidate is still canonical.
+- A capture that is not settled by a probe (for example a timed-out probe) is `omitted`, not `unsettled`, because the time limit, not a live process, stopped it.
+- Recording failure during a `tool.capture` write follows the same mandatory-emit path as `tool.outcome` (#12): no further operation runs. A dedicated fault-injection test for this event is deferred.
+- The inspector shows previews and the link to `capture.json`; a full repository view and a diff view across tools are deferred.
+
 ## Implemented in #11 versus deferred
 
 - Implemented: the sink contract on the Python loop; durable recorder with contiguous sequences and content-addressed artifacts; reader that ignores only an unterminated final record and raises on corruption; loopback server (`/`, `/static`, `/api/attempts`, events with `after`, confined artifacts, SSE with `Last-Event-ID` resume); minimal TypeScript timeline; the scripted runner; observation-on/off parity test; system-Chrome browser test.
@@ -146,7 +209,8 @@ AGENT_EVAL_DOCKER_INTEGRATION=1 ML_TUTOR_ADMISSION_EVIDENCE=<admission.json> ML_
 - Implemented in #17: cursor refusals, catch-up and handoff, client dedupe and gaps, bounded per-connection buffering with slow-consumer disconnect, connection state and lag (see above).
 - Implemented in #15: `node.enter`, `node.outcome`, `route.decision` and graph `state` events from `run_attempt_graph`; the LangGraph component entries (model node, tool node, router) with registered source links; `run_scripted --orchestrator langgraph`; the LangGraph Docker parity, browser and overhead checks described above. The sink is no longer refused for `langgraph`.
 - Implemented in #14: playback controls for saved recordings, the read-only legacy adapter for the first live pair, the final-results panel separate from the selected point, the report projected from the log with recording and Codex review status, the playback server mode and its no-provider proof, and browser parity tests (see below).
-- Deferred: mutation capture (#16), provider streaming, evaluation and report phase events, and the comparison desk (#18).
+- Implemented in #16: bounded repository capture after `apply_patch` and `run_shell` (see the section below), the `tool.capture` event, the inspector's capture section, the no-provider demo and the Docker, browser and overhead checks.
+- Deferred: provider streaming, evaluation and report phase events, and the comparison desk (#18).
 
 Read the [published tickets](docs/TICKETS.md), [specification](docs/SPEC.md), [design](docs/DESIGN.md), [learning sequence](docs/LEARNING_PLAN.md) and [decision interview](../docs/observability-interview.md). The disposable [layout prototype](../../harness-viewer-prototype.html?variant=A) is outside the production source tree. Its original builder/template and verdict are captured on local branch `prototype/live-tracker-layout` at `0024ce6243b62b31b2f6121758d2bbb0e9a44bb0`; this throwaway branch has not been pushed.
 

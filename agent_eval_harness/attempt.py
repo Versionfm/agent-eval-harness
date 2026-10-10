@@ -20,6 +20,7 @@ from agent_eval_harness.environment import (
     run_canonical_checks,
 )
 from agent_eval_harness.admission import task_package_evidence
+from agent_eval_harness.capture import CaptureLimits, RepositoryCapture
 from agent_eval_harness.model import (
     ModelAdapter,
     ModelConfig,
@@ -320,12 +321,14 @@ def attempt_and_evaluate(
     artifact_directory: Path,
     orchestrator: str = "python-loop",
     event_sink: AttemptEventSink | None = None,
+    capture_limits: CaptureLimits | None = None,
 ) -> dict[str, Any]:
     """Execute an explicit tool loop, capture its patch, and score a fresh defect copy.
 
     An optional event_sink observes phases or graph nodes and routing, model/tool
     starts and outcomes, and selected-point state. Mandatory emits are synchronous:
-    if one raises, no further node, model or tool operation runs.
+    if one raises, no further node, model or tool operation runs. An observed attempt
+    also records bounded repository changes after mutating tools (capture_limits).
     """
     sink: AttemptEventSink = NULL_EVENT_SINK if event_sink is None else event_sink
     artifact_directory = artifact_directory.expanduser().resolve()
@@ -392,6 +395,7 @@ def attempt_and_evaluate(
     work_deadline = attempt_deadline - budgets.cleanup_timeout_seconds
     defect_baseline: dict[str, tuple[bytes, int]] = {}
     attempt_container: DockerTaskContainer | None = None
+    repository_capture: RepositoryCapture | None = None
     model_call_count = 0
     usage_records = []
     harness_error: str | None = None
@@ -423,6 +427,10 @@ def attempt_and_evaluate(
             )
             result["attempt_container_configuration"] = attempt_container.configuration
             result["metadata"]["attempt_repository"] = str(task_repository)
+            if sink is not NULL_EVENT_SINK:
+                repository_capture = RepositoryCapture(
+                    attempt_container, task_repository, defect_baseline, capture_limits,
+                )
             sink.emit("attempt_started", {
                 "task_id": admitted_task.task_id, "orchestrator": orchestrator,
                 "requested_model": model_config.requested_model, "provider": model_config.provider,
@@ -508,6 +516,7 @@ def attempt_and_evaluate(
                         work_deadline=work_deadline,
                         trace=trace,
                         event_sink=sink,
+                        repository_capture=repository_capture,
                     )
                     return {
                         "messages": graph_messages[previous_count:],
@@ -572,6 +581,7 @@ def attempt_and_evaluate(
                         work_deadline=work_deadline,
                         trace=trace,
                         event_sink=sink,
+                        repository_capture=repository_capture,
                     )
 
                 termination, model_call_count = run_python_loop(
@@ -682,6 +692,8 @@ def attempt_and_evaluate(
                 result.setdefault("cleanup_error", cleanup_error)
                 _record(trace, "cleanup_error", status="error", error=cleanup_error)
         _finalize_accounting(result, model, model_call_count, usage_records, trace)
+        if repository_capture is not None:
+            result["metadata"]["repository_capture"] = repository_capture.summary()
         result["metadata"].setdefault(
             "attempt_duration_seconds", round(time.monotonic() - started, 6)
         )

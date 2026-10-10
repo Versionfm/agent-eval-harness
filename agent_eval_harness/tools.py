@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from agent_eval_harness.builtins import apply_patch, read_file, run_shell, search_text
+from agent_eval_harness.capture import MUTATING_TOOLS, RepositoryCapture
 from agent_eval_harness.context import _json_copy, _tool_output_for_model
 from agent_eval_harness.environment import DockerTaskContainer
 from agent_eval_harness.model import ModelResponse, ToolCall
@@ -75,6 +76,7 @@ def execute_tool_turn(
     work_deadline: float,
     trace: list[dict[str, Any]],
     event_sink: AttemptEventSink = NULL_EVENT_SINK,
+    repository_capture: RepositoryCapture | None = None,
 ) -> str | None:
     """Run one ordered tool node and append its bounded outputs to conversation state."""
     for index, call in enumerate(response.tool_calls, 1):
@@ -89,6 +91,7 @@ def execute_tool_turn(
         )
         tool_remaining = work_deadline - tool_started
         default_timeout = float(budgets.shell_timeout_seconds) if call.name == "run_shell" else 30.0
+        dispatched = tool_remaining > 0
         if tool_remaining <= 0:
             tool_result = {
                 "status": "error", "output": "",
@@ -147,6 +150,10 @@ def execute_tool_turn(
             {"output.txt": full_output.encode("utf-8", errors="replace")},
             operation_id=operation_id, parent_operation_id=f"model-{model_call_count}",
         )
+        # Observation only: the capture never changes the tool result, the messages or the candidate.
+        if repository_capture is not None and dispatched and call.name in MUTATING_TOOLS:
+            capture_data, capture_artifacts = repository_capture.observe(call.name)
+            event_sink.emit("tool.capture", capture_data, capture_artifacts, parent_operation_id=operation_id)
         messages.append({
             "role": "tool", "tool_call_id": tool_id, "name": call.name,
             "content": json.dumps(visible, ensure_ascii=False, sort_keys=True),
