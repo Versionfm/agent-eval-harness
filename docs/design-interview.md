@@ -30,6 +30,10 @@
 - Initial context: task description, repository instructions, and a short file map; source discovery happens through tools.
 - Stop on agent-declared completion or hard limits on turns, elapsed time, and tool-output size. Preserve partial traces and patches. Calibrate numeric limits with a smoke run.
 - Milestone acceptance requires baseline-pass, defect-fail, known-repair-pass evidence and comparable traces/reports from both implementations. Agent failure is a valid measured outcome.
+- Initial hosted model target: Qwen3.8-27B, replacing the GPT-5.4 mini proposal. Provider and generation settings remain to be selected.
+- Context exhaustion initially stops the attempt with preserved artifacts; traceable compaction is a later experiment.
+- Prepare dependencies before attempts; task-container networking is disabled. The outer harness handles model requests and keeps API credentials outside the task container.
+- Use bounded, logged retries for transient provider errors; return tool errors as structured results to the agent.
 
 ## Decision tree
 
@@ -121,15 +125,15 @@ The user has confirmed the direction but not a complete implementation design. C
 
 Detailed context management, provider access, task packaging, and execution policies will follow these answers. Implementation remains pending final confirmation of shared understanding.
 
-## Hosted model proposal — not yet confirmed
+## Superseded hosted model proposal
 
 Official OpenAI documentation checked on 2026-10-10 supports `gpt-5.4-mini` as an initial candidate: coding-oriented positioning, function calling, structured outputs, and a documented snapshot `gpt-5.4-mini-2026-03-17`. Standard text pricing is USD 0.75 per million input tokens, USD 0.075 per million cached input tokens, and USD 4.50 per million output tokens. A hypothetical attempt totaling 100,000 uncached input tokens and 10,000 billed output tokens costs USD 0.12 at those rates; this is illustrative, not a predicted attempt cost.
 
 Source: https://developers.openai.com/api/docs/models/gpt-5.4-mini
 
-Account access, live tool-call reliability, usage, and latency have not been verified. Model selection remains a proposal until the user confirms it.
+Account access, live tool-call reliability, usage, and latency were not verified. The user chose Qwen3.8-27B instead; GPT-5.4 mini is not the selected target.
 
-## Round 6 — awaiting answers
+## Round 6 — answered
 
 23. Initial hosted model: accept the proposed GPT-5.4 mini snapshot?
    Recommendation: yes, with low reasoning effort initially and the same settings in both orchestrators. Record every setting in attempt metadata.
@@ -139,3 +143,27 @@ Account access, live tool-call reliability, usage, and latency have not been ver
    Recommendation: prepare dependencies before the run, disable task-container networking, and make model requests from the outer harness. Keep API credentials outside the task container.
 26. Error recovery policy: silently retry, expose every failure to the agent, or distinguish provider errors from tool errors?
    Recommendation: bounded, logged retries for transient provider failures; return tool errors to the agent as structured results. Record all failed requests and retries in usage/trace data when available.
+
+Q23 selected Qwen3.8-27B rather than the OpenAI recommendation. Q24–26 accepted the recommendations.
+
+## Qwen source checks — 2026-10-10
+
+- Official model card: https://huggingface.co/Qwen/Qwen3.8-27B
+- Official hosted model documentation: https://www.alibabacloud.com/help/en/model-studio/qwen3-8-27b
+- Alibaba Cloud Model Studio pricing: https://www.alibabacloud.com/help/en/model-studio/model-pricing
+- OpenRouter hosting/routing information: https://openrouter.ai/qwen/qwen3.8-27b
+
+Alibaba's international Singapore listing prices `qwen3.8-27b` at USD 0.50 per million input tokens and USD 3.00 per million output tokens, including billed thinking plus answer. A hypothetical 100,000 input + 10,000 output token attempt costs USD 0.08 before applicable adjustments. This is illustrative, not a prediction.
+
+The model card reports strong coding benchmark results, but results depend on the evaluation harness and settings. For example, its SWE-bench Pro comparison uses a Claude Code harness and a refined task set. These are developer-reported results, not measured results from this project.
+
+Hosted provider settings, actual account access, latency, tool-call reliability, and local 16 GB deployment remain unverified. OpenRouter routing/prices vary by backend; controlled comparisons should fix and record the backend rather than silently switch providers.
+
+## Round 7 — awaiting answers
+
+27. Hosted provider: Alibaba Cloud directly or OpenRouter with a pinned backend?
+   Recommendation: OpenRouter with a fixed tool-capable backend and automatic fallback disabled, for easier later model comparisons; choose backend using current pricing plus a tool-call smoke check.
+28. Initial thinking configuration: enabled or disabled?
+   Recommendation: enabled at a modest supported effort, with a bounded output budget; keep the same setting in both harnesses and record whatever reasoning content the provider exposes.
+
+After these choices, prepare a concrete design and learning sequence for final shared-understanding confirmation. No model request or harness implementation has been executed.
