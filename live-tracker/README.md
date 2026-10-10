@@ -201,6 +201,68 @@ Doubts and deferred items:
 - Recording failure during a `tool.capture` write follows the same mandatory-emit path as `tool.outcome` (#12): no further operation runs. A dedicated fault-injection test for this event is deferred.
 - The inspector shows previews and the link to `capture.json`; a full repository view and a diff view across tools are deferred.
 
+## Live matched pair (#18)
+
+`live_tracker.run_matched` runs one fresh Python-loop and LangGraph pair through `agent_eval_harness.run_matched_comparison`, with one observed recorder per attempt. Each finished attempt is projected from its log (`result.json`, `trace.jsonl`, `report.html`) before the comparison report is built. The workbench serves both attempts, and `live-pair.json` retains the budgets, effective settings, pricing provenance, usage, estimated and reported cost, observer overhead, deadline use and pending Codex reviews.
+
+Budgets: combined USD 0.10 ceiling, smoke USD 0.01, each repair attempt USD 0.04. The stage ceilings sum to 0.09, so the shared ledger is the enforced total. The validator requires each stage to admit one request at its output limit: 2,048 tokens reserve USD 0.0024576 at peak uncached rates, and the 512-token smoke reserves USD 0.0006144. Other settings are the first live pair's (10 model calls, 128 KiB context, 600 s deadline, 60 s shell timeout). At peak rates a request body near the 128 KiB context limit reserves about USD 0.039 of input, so such a request can be refused as `spending_budget` before the context budget is reached. The first live pair estimated USD 0.0082 (Python loop, 8 calls) and USD 0.0047 (LangGraph, 10 calls), so a normal pair should sit well inside the ceiling.
+
+Parity prerequisite, scripted with no provider call (the committed comparison pins an older harness revision, so regenerate it):
+
+```bash
+PYTHON=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/runtime/bin/python
+ROOT=/home/francisco/Documents/Codex/2026-10-10/d/outputs/agent-eval-harness
+ADMISSION=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/final/admission/admission.json
+PARITY=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/live-tracker-2026-10-10-parity
+cd "$ROOT"
+"$PYTHON" -m agent_eval_harness.run_langgraph_parity --admission-evidence "$ADMISSION" \
+  --source-repository /home/francisco/prompt-engineering-group-project --output-dir "$PARITY"
+```
+
+Live command (one paid pair, the only paid run in this ticket; the lead runs it after review):
+
+```bash
+EVIDENCE=/home/francisco/Documents/Codex/2026-10-10/d/outputs/evidence/live-tracker-2026-10-10
+PYTHONPATH=live-tracker/src "$PYTHON" -m live_tracker.run_matched \
+  --credential-file /home/francisco/.config/agent-eval-harness/deepseek-api-key.txt \
+  --admission-evidence "$ADMISSION" --parity-evidence "$PARITY/comparison.json" \
+  --artifact-dir "$EVIDENCE"
+```
+
+The command prints one viewer URL per attempt (`?attempt=<id>`) before the first provider request. It exits 0 only for a valid measurement and keeps the viewers open until Ctrl+C. The output directory must not exist and must be outside both repositories.
+
+Playback of both saved attempts, with no provider or Docker:
+
+```bash
+PYTHONPATH=live-tracker/src "$PYTHON" -m live_tracker.playback \
+  --recording "$EVIDENCE/python-loop" --recording "$EVIDENCE/langgraph" --port 8766
+```
+
+### Learning walkthrough and evidence status
+
+Each behavior is labelled by how it was verified. Live demonstration stays pending until the lead's run.
+
+| Behavior | Implemented | Deterministic-tested | Browser-verified | Live-demonstrated |
+|---|---|---|---|---|
+| One matched pair, one recorder per attempt, through the existing coordinator | yes | yes (`test_live_pair_docker`, Docker) | no | pending lead run |
+| Projections and comparison report built from observed attempt directories | yes | yes (Docker) | no | pending lead run |
+| Observed vs unobserved parity of model-visible messages, candidate and verdict, both orchestrators | yes | yes (Docker) | no | n/a |
+| Recording failure stops the attempt per orchestrator (`FaultyStorage`) | yes | yes (Docker) | no | n/a |
+| Interrupted provider call per orchestrator (controlled `KeyboardInterrupt`, recorded as `interrupted`) | yes | yes (Docker) | no | n/a |
+| Shared ledger covers smoke, both attempts and retries; a request that cannot fit is refused with no transport call | yes | yes (`test_matched_observation`, offline) | n/a | n/a |
+| Stage ceilings admit one output-limit request; combined ceiling covers stages | yes | yes (offline) | n/a | pending lead run |
+| Manifest retains budgets, pricing provenance, usage, estimated vs reported cost, overhead, deadline use, pending reviews | yes | yes (offline and Docker) | n/a | pending lead run |
+| Two viewer URLs for the live workbench | yes | yes (server registry, Docker) | not run in this ticket | pending lead run |
+| In-page attempt picker | deferred | no | no | no |
+| Token streaming and comparison layout C | deferred | no | no | no |
+
+Walkthrough after the live run:
+
+1. Open `live-pair.json`. Check `valid_measurement`, `budgets_usd`, `shared_spend_budget` and `pricing`, then compare each attempt's `usage.estimated_cost_usd` with the shared ledger. `reported_cost_usd` is `unavailable` because the provider does not return billed cost.
+2. Read each attempt's `recording.state` and `overhead`. The overhead is measured time inside the recorder, not an estimate, and `deadline.used_fraction` shows how close the attempt came to its deadline.
+3. Open the two playback URLs and follow the same model and tool operations in each. Repair success or failure is an observed outcome for one task and one attempt, not evidence of orchestrator ranking.
+4. Keep the Codex reviews separate: `qualitative_review` is `pending` until a review record for that exact attempt exists.
+
 ## Implemented in #11 versus deferred
 
 - Implemented: the sink contract on the Python loop; durable recorder with contiguous sequences and content-addressed artifacts; reader that ignores only an unterminated final record and raises on corruption; loopback server (`/`, `/static`, `/api/attempts`, events with `after`, confined artifacts, SSE with `Last-Event-ID` resume); minimal TypeScript timeline; the scripted runner; observation-on/off parity test; system-Chrome browser test.
