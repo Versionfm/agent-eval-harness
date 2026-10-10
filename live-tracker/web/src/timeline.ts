@@ -11,11 +11,26 @@ interface TrackerEvent {
   artifacts: { role: string; path: string; bytes: number; sha256: string }[];
 }
 
+interface Recording {
+  state: "empty" | "open" | "interrupted" | "complete" | "failed" | "corrupt";
+  verified_events: number;
+  torn_tail_bytes: number;
+  unresolved_operations: string[];
+  problems: { kind: string; sequence: number | null; detail: string }[];
+  failure: { error: string; failed_event_type?: string } | null;
+}
+
 const ARTIFACT_PATH = /^artifacts\/[0-9a-f]{64}$/;
 const timeline = document.getElementById("timeline") as HTMLOListElement;
 const status = document.getElementById("status") as HTMLElement;
+const banner = document.createElement("p");
+banner.id = "recording";
+banner.setAttribute("role", "status");
+banner.hidden = true;
+status.after(banner);
 let attemptId = "";
 let lastSequence = 0;
+let recording: Recording | null = null;
 
 function describe(event: TrackerEvent): string {
   const data = event.data;
@@ -37,6 +52,43 @@ function describe(event: TrackerEvent): string {
     default:
       return event.type;
   }
+}
+
+function describeRecording(next: Recording): string {
+  const first = next.problems[0];
+  switch (next.state) {
+    case "corrupt":
+      return `Recording is corrupt (${next.problems.length} problem${next.problems.length === 1 ? "" : "s"}; first: ${first?.detail ?? "unknown"}). Damaged records are listed, not skipped.`;
+    case "failed":
+      return `Recording failed while writing ${next.failure?.failed_event_type ?? "an event"}: ${next.failure?.error ?? "unknown error"}. The attempt stopped before its next operation.`;
+    case "interrupted":
+      return `Recording is incomplete: the final record was cut off (${next.torn_tail_bytes} bytes not verified).`;
+    case "open":
+      return "The attempt has not recorded its finish: it is still running, or it stopped without a final record.";
+    default:
+      return "";
+  }
+}
+
+// Start records without an outcome are labelled: awaiting while live, unresolved once the recording stopped.
+function labelOperations(): void {
+  const pending = new Set(recording?.unresolved_operations ?? []);
+  const label = recording?.state === "open" ? "awaiting outcome" : "unresolved";
+  timeline.querySelectorAll<HTMLLIElement>("li[data-operation]").forEach((row) => {
+    const state = row.querySelector(".operation-state");
+    const unresolved = pending.has(row.dataset.operation ?? "");
+    if (state) {
+      state.textContent = unresolved ? label : "";
+    }
+  });
+}
+
+function applyRecording(next: Recording): void {
+  recording = next;
+  const text = describeRecording(next);
+  banner.textContent = text;
+  banner.hidden = text === "";
+  labelOperations();
 }
 
 function render(event: TrackerEvent): void {
@@ -67,6 +119,12 @@ function render(event: TrackerEvent): void {
     operation.textContent = event.operation_id;
     row.append(operation);
   }
+  if (event.operation_id && event.type.endsWith(".start")) {
+    row.dataset.operation = event.operation_id;
+    const state = document.createElement("span");
+    state.className = "operation-state";
+    row.append(state);
+  }
   for (const artifact of event.artifacts) {
     if (!ARTIFACT_PATH.test(artifact.path)) {
       continue;
@@ -77,6 +135,7 @@ function render(event: TrackerEvent): void {
     row.append(link);
   }
   timeline.append(row);
+  labelOperations();
 }
 
 function follow(): void {
@@ -94,9 +153,13 @@ function follow(): void {
       status.textContent = "finished";
     }
   });
-  source.addEventListener("recording-error", () => {
-    source.close();
-    status.textContent = "recording error: evidence is incomplete";
+  source.addEventListener("recording-status", (message) => {
+    const next = JSON.parse((message as MessageEvent).data) as Recording;
+    applyRecording(next);
+    if (next.state === "failed" || next.state === "corrupt") {
+      source.close();
+      status.textContent = "recording stopped";
+    }
   });
   source.onerror = () => {
     status.textContent = source.readyState === EventSource.CLOSED ? "closed" : "reconnecting";
@@ -112,10 +175,16 @@ async function start(): Promise<void> {
   attemptId = attempts[0].attempt_id;
   const history = (await (await fetch(`/api/attempts/${encodeURIComponent(attemptId)}/events?after=0`)).json()) as {
     events: TrackerEvent[];
+    recording: Recording;
   };
   history.events.forEach(render);
+  applyRecording(history.recording);
   if (history.events.some((event) => event.type === "attempt_finished")) {
     status.textContent = "finished";
+    return;
+  }
+  if (history.recording.state === "failed" || history.recording.state === "corrupt") {
+    status.textContent = "recording stopped";
     return;
   }
   follow();

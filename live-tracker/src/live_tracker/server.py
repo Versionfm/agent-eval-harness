@@ -9,7 +9,7 @@ import time
 from typing import Any, Mapping
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from live_tracker.reader import RecordingError, read_attempt_events
+from live_tracker.reader import read_attempt_history
 
 
 WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
@@ -49,25 +49,24 @@ class _TrackerHandler(BaseHTTPRequestHandler):
 
     def _summary(self, item: tuple[str, Path]) -> dict[str, Any]:
         attempt_id, directory = item
-        try:
-            events = read_attempt_events(directory)
-        except RecordingError as exc:
-            return {"attempt_id": attempt_id, "recording_error": str(exc)}
+        history = read_attempt_history(directory)
         return {
             "attempt_id": attempt_id,
-            "event_count": len(events),
-            "finished": bool(events) and events[-1]["type"] == "attempt_finished",
+            "event_count": len(history.events),
+            "finished": bool(history.events) and history.events[-1]["type"] == "attempt_finished",
+            "recording": history.status(),
         }
 
     def _events(self, directory: Path, query: str) -> None:
         try:
             after = int(parse_qs(query).get("after", ["0"])[0])
-            events = read_attempt_events(directory)
         except ValueError:
             return self._json({"error": "after must be an integer"}, 400)
-        except RecordingError as exc:
-            return self._json({"error": str(exc)}, 500)
-        self._json({"events": [event for event in events if event["sequence"] > after]})
+        history = read_attempt_history(directory)
+        self._json({
+            "events": [event for event in history.events if event["sequence"] > after],
+            "recording": history.status(),
+        })
 
     def _stream(self, attempt_id: str, directory: Path, query: str) -> None:
         sent = int(parse_qs(query).get("after", ["0"])[0] or 0)
@@ -78,14 +77,11 @@ class _TrackerHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
+        last_status = None
         try:
             while True:
-                try:
-                    events = read_attempt_events(directory)
-                except RecordingError as exc:
-                    self._frame(f"event: recording-error\ndata: {json.dumps({'error': str(exc)})}\n\n")
-                    return
-                for event in events:
+                history = read_attempt_history(directory)
+                for event in history.events:
                     if event["sequence"] <= sent:
                         continue
                     sent = event["sequence"]
@@ -93,8 +89,14 @@ class _TrackerHandler(BaseHTTPRequestHandler):
                         f"id: {attempt_id}:{sent}\nevent: attempt-event\n"
                         f"data: {json.dumps(event, ensure_ascii=False, sort_keys=True)}\n\n"
                     )
-                    if event["type"] == "attempt_finished":
-                        return
+                # Status follows the events it describes, so a client can close only after them.
+                status = json.dumps(history.status(), ensure_ascii=False, sort_keys=True)
+                if status != last_status:
+                    last_status = status
+                    self._frame(f"event: recording-status\ndata: {status}\n\n")
+                finished = bool(history.events) and history.events[-1]["type"] == "attempt_finished"
+                if finished or history.state in {"corrupt", "failed"}:
+                    return
                 time.sleep(POLL_SECONDS)
         except (BrokenPipeError, ConnectionResetError):
             # A departed browser never affects the attempt; the recorder keeps writing.

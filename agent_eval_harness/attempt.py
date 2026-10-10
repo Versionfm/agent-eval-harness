@@ -30,7 +30,9 @@ from agent_eval_harness.model import (
     ScriptedModel,
     ToolCall,
 )
-from agent_eval_harness.observation import NULL_EVENT_SINK, AttemptEventSink, json_artifact
+from agent_eval_harness.observation import (
+    NULL_EVENT_SINK, AttemptEventSink, EventRecordingError, json_artifact,
+)
 from agent_eval_harness.paths import orchestration_root
 from agent_eval_harness.report import render_attempt_report
 
@@ -604,6 +606,16 @@ def attempt_and_evaluate(
             trace, "interruption", status="interrupted",
             error=f"{type(exc).__name__}: {exc}",
         )
+    except EventRecordingError as exc:
+        # A mandatory record failed: no further operation ran; the candidate is recovered in cleanup.
+        harness_error = f"{type(exc).__name__}: {exc}"
+        result["harness_error"] = harness_error
+        result["recording"] = {"status": "failed", "error": str(exc)}
+        result["termination_reason"] = "harness_error"
+        result["failure_category"] = "recording_failure"
+        result["functional_verdict"] = "invalid_environment"
+        result["evaluation"] = {"status": "error", "checks": {}, "error": harness_error}
+        _record(trace, "harness_error", status="error", error=harness_error)
     except Exception as exc:
         harness_error = f"{type(exc).__name__}: {exc}"
         result["harness_error"] = harness_error
@@ -674,15 +686,19 @@ def attempt_and_evaluate(
         result["duration_seconds"] = round(time.monotonic() - started, 6)
         result["metadata"]["duration_seconds"] = result["duration_seconds"]
         result["metadata"]["finished_at"] = _timestamp()
-        sink.emit(
-            "attempt_finished", {
-                "termination_reason": result["termination_reason"],
-                "functional_verdict": result["functional_verdict"],
-                "failure_category": result.get("failure_category"),
-                "changed_files": result["candidate"].get("changed_files", []),
-                "checks": result["evaluation"].get("checks", {}),
-            },
-            {"candidate.patch": result["candidate"].get("patch", "").encode("utf-8")},
-        )
+        try:
+            sink.emit(
+                "attempt_finished", {
+                    "termination_reason": result["termination_reason"],
+                    "functional_verdict": result["functional_verdict"],
+                    "failure_category": result.get("failure_category"),
+                    "changed_files": result["candidate"].get("changed_files", []),
+                    "checks": result["evaluation"].get("checks", {}),
+                },
+                {"candidate.patch": result["candidate"].get("patch", "").encode("utf-8")},
+            )
+        except EventRecordingError as exc:
+            # The result is still returned; an earlier failure keeps its own message.
+            result.setdefault("recording", {"status": "failed", "error": str(exc)})
         _collect_artifacts(result, artifact_directory)
     return result
