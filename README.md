@@ -6,6 +6,10 @@ The task pins `Versionfm/prompt-engineering-group-project` at `6890d9eae6ebd2967
 
 The admission runner creates three disposable source copies, builds a digest-pinned Python 3.12.13 environment without network access, and probes each variant in a separate container. A probe worker has no network, one read-only task mount, and no curator evaluator, credentials, or container socket. It returns observations; the outer harness loads the curator checks and decides each result. The runner produces machine-readable evidence and a small HTML summary. Setup and evaluator errors are reported as `invalid_environment`; behavior mismatches are `rejected`.
 
+## Layout
+
+The package has four layers. `harness/` is the agent: the numbered components and the model adapters. `bench/` runs the agent on a task and grades it. `reports/` renders saved evidence. `cli/` holds the runnable commands. The rule is in [AGENTS.md](AGENTS.md), and `python3 -m unittest tests.test_layout` checks it. The [component map](docs/COMPONENT_MAP.md) lists each file with its component number and status.
+
 ## Run the admission experiment
 
 Provide a local ML Tutor checkout containing the pinned commit:
