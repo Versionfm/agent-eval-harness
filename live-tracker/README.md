@@ -1,6 +1,36 @@
 # Live tracker
 
-Dedicated home for live observation and recorded playback of harness attempts. Status: **specification published** as [issue #10](https://github.com/Versionfm/agent-eval-harness/issues/10) with `ready-for-agent`. The production recorder/server/client are not implemented.
+Dedicated home for live observation and recorded playback of harness attempts. Specification: [issue #10](https://github.com/Versionfm/agent-eval-harness/issues/10). Status: ticket [#11](https://github.com/Versionfm/agent-eval-harness/issues/11) implemented (foundation slice: one scripted Python attempt observed live). Playback, legacy adapters, reconnect/recovery hardening and the LangGraph integration are deferred to #12–#18.
+
+## Reproduce the observed scripted attempt
+
+Requires Docker and the admitted task environment (see the harness README). Starts the loopback viewer, then runs a scripted model → `read_file` → completion attempt in the real task container, recording every event:
+
+```bash
+PYTHONPATH=live-tracker/src python -m live_tracker.run_scripted \
+  --admission-evidence <admission.json bound to the current task package> \
+  --source-repository /path/to/prompt-engineering-group-project
+# prints "viewer: http://127.0.0.1:8765/"; open it while the attempt runs. Ctrl+C stops the viewer.
+```
+
+Tests (Docker tests need `AGENT_EVAL_DOCKER_INTEGRATION=1`, `ML_TUTOR_ADMISSION_EVIDENCE` and `ML_TUTOR_REPOSITORY`; the browser test uses the system Chrome, `channel="chrome"`):
+
+```bash
+PYTHONPATH=live-tracker/src python -m unittest discover -s live-tracker/tests -t live-tracker/tests
+```
+
+The compiled client is committed in `web/dist/`. To rebuild after editing `web/src/timeline.ts`: `cd live-tracker/web && npm install && npm run build`.
+
+## Event boundary
+
+The harness publishes through an optional `event_sink` (`agent_eval_harness/observation.py`) passed to `attempt_and_evaluate`. Without it, behavior is unchanged. The sink receives `attempt_started`, `initial_context`, `model.start`/`model.outcome` (`model-N`), `tool.start`/`tool.outcome` (`tool-N-I`, parent `model-N`) and `attempt_finished` (with the candidate patch). The recorder owns sequence, timestamps, elapsed time and artifact digests. Starts are emitted before the provider or tool call, outside its exception handling, so a failed start stops the attempt before any further operation. Outcomes and artifacts are written and fsynced before the event is appended. Observer data never enters model messages.
+
+Final `result.json` and `report.html` are still written from the in-memory trace after the attempt, next to the append-only `events.jsonl`; the log is never rewritten.
+
+## Implemented in #11 versus deferred
+
+- Implemented: the sink contract on the Python loop; durable recorder with contiguous sequences and content-addressed artifacts; reader that ignores only an unterminated final record and raises on corruption; loopback server (`/`, `/static`, `/api/attempts`, events with `after`, confined artifacts, SSE with `Last-Event-ID` resume); minimal TypeScript timeline; the scripted runner; observation-on/off parity test; system-Chrome browser test.
+- Deferred: LangGraph observation (#15; passing a sink with `langgraph` is refused), mutation capture (#16), recording-failure recovery scenarios and bounded slow-consumer buffering (#12), legacy recording adapters and playback controls (#13/#14), the layout/inspector beyond the minimal timeline, and provider streaming.
 
 Read the [published tickets](docs/TICKETS.md), [specification](docs/SPEC.md), [design](docs/DESIGN.md), [learning sequence](docs/LEARNING_PLAN.md) and [decision interview](../docs/observability-interview.md). The disposable [layout prototype](../../harness-viewer-prototype.html?variant=A) is outside the production source tree. Its original builder/template and verdict are captured on local branch `prototype/live-tracker-layout` at `0024ce6243b62b31b2f6121758d2bbb0e9a44bb0`; this throwaway branch has not been pushed.
 
@@ -17,7 +47,7 @@ live-tracker/
 └── tests/                 # Recording, delivery, UI and integration verification
 ```
 
-Only README and the design documents exist today. Source directories are created when their implementation tickets are approved; empty modules would not establish working behavior.
+Source directories are created by their implementation tickets; #11 adds the recorder, reader, server, runner and client.
 
 ## Boundary
 

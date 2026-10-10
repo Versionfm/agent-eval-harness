@@ -10,6 +10,7 @@ from agent_eval_harness.builtins import apply_patch, read_file, run_shell, searc
 from agent_eval_harness.context import _json_copy, _tool_output_for_model
 from agent_eval_harness.environment import DockerTaskContainer
 from agent_eval_harness.model import ModelResponse, ToolCall
+from agent_eval_harness.observation import NULL_EVENT_SINK, AttemptEventSink
 from agent_eval_harness.persistence import _record
 
 
@@ -73,11 +74,19 @@ def execute_tool_turn(
     budgets: Any,
     work_deadline: float,
     trace: list[dict[str, Any]],
+    event_sink: AttemptEventSink = NULL_EVENT_SINK,
 ) -> str | None:
     """Run one ordered tool node and append its bounded outputs to conversation state."""
     for index, call in enumerate(response.tool_calls, 1):
         tool_started = time.monotonic()
         tool_id = call.call_id or f"call-{model_call_count}-{index}"
+        operation_id = f"tool-{model_call_count}-{index}"
+        # Before any dispatch: a failed start record must stop the tool from running.
+        event_sink.emit(
+            "tool.start", {"tool_name": call.name, "tool_call_id": tool_id,
+                           "arguments": _json_copy(dict(call.arguments))},
+            operation_id=operation_id, parent_operation_id=f"model-{model_call_count}",
+        )
         tool_remaining = work_deadline - tool_started
         default_timeout = float(budgets.shell_timeout_seconds) if call.name == "run_shell" else 30.0
         if tool_remaining <= 0:
@@ -126,6 +135,17 @@ def execute_tool_turn(
             arguments=_json_copy(dict(call.arguments)), status=tool_result.get("status"),
             duration_seconds=round(duration, 6), result=tool_result,
             model_visible_result=visible,
+        )
+        full_output = str(tool_result.get("output", ""))
+        inline_result = {key: value for key, value in tool_result.items() if key != "output"}
+        event_sink.emit(
+            "tool.outcome", {
+                "tool_name": call.name, "tool_call_id": tool_id,
+                "status": tool_result.get("status"), "duration_seconds": round(duration, 6),
+                "result": inline_result, "model_visible_result": visible,
+            },
+            {"output.txt": full_output.encode("utf-8", errors="replace")},
+            operation_id=operation_id, parent_operation_id=f"model-{model_call_count}",
         )
         messages.append({
             "role": "tool", "tool_call_id": tool_id, "name": call.name,
