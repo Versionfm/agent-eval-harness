@@ -1,4 +1,4 @@
-"""Observed-only, bounded capture of repository changes after potentially mutating tools.
+"""Bench · observed-only, bounded capture of repository changes after potentially mutating tools.
 
 A capture describes the task repository relative to the attempt's starting state. It is
 taken only when an event sink is attached, never writes to the repository, and never changes

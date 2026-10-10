@@ -1,4 +1,4 @@
-"""Fingerprint the harness checkout and runtime used for an attempt."""
+"""Bench · fingerprint the harness checkout and runtime used for an attempt."""
 
 from __future__ import annotations
 

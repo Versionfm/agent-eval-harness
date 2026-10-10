@@ -1,7 +1,7 @@
-"""Explicit LangGraph wiring for the shared coding-agent attempt steps.
+"""01 · While loop, as a LangGraph — a second way to run the same loop, with explicit nodes and routes.
 
-Nodes, routing and graph-step counting live here; the model and tool work they call is the
-shared lifecycle in loop.py and tools.py. With an event sink, each node entry and outcome,
+Routing and graph-step counting live here. The node functions are defined in bench/attempt.py and call the
+shared model and tool steps in loop.py and tools.py. With an event sink, each node entry and outcome,
 each routing decision and each selected-point state is published where it happens.
 """
 

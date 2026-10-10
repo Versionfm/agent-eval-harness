@@ -1,4 +1,4 @@
-"""Run inspectable offline parity scenarios through Python and LangGraph."""
+"""CLI · run inspectable offline parity scenarios through Python and LangGraph."""
 
 from __future__ import annotations
 

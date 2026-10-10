@@ -1,4 +1,8 @@
-"""Ordered attempt trace events and the complete saved artifact set."""
+"""06 · Session records — ordered attempt trace events, kept in memory.
+
+_record appends an event to the in-memory trace. _record_final also publishes it to the event sink.
+The saved artifact set is written by bench/artifacts.py, not here.
+"""
 
 from __future__ import annotations
 

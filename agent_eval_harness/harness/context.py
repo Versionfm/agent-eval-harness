@@ -1,4 +1,4 @@
-"""Conversation state encoding, provider continuation, and context measurements."""
+"""02 · Context management — conversation state encoding, provider continuation, bounded tool output and size measurements."""
 
 from __future__ import annotations
 

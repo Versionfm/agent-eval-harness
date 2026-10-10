@@ -1,4 +1,4 @@
-"""Candidate snapshot, patch validation, and evaluator-owned verdict mapping."""
+"""Bench · candidate snapshot, patch validation, and evaluator-owned verdict mapping."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Local HTML rendering for one scripted coding-agent attempt."""
+"""Reports · local HTML rendering for one coding-agent attempt."""
 
 from __future__ import annotations
 

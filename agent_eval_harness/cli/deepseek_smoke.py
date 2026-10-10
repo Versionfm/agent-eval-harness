@@ -1,4 +1,4 @@
-"""Bounded direct-DeepSeek smoke check, with no repository edits or shell tools."""
+"""CLI · bounded direct-DeepSeek smoke check, with no repository edits or shell tools."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Run one coding-agent attempt through the shared Python or LangGraph lifecycle."""
+"""Bench · attempt lifecycle facade: runs one coding-agent attempt on the shared Python or LangGraph loop, then grades it."""
 
 from __future__ import annotations
 
