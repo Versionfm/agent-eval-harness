@@ -1,17 +1,33 @@
-// Workbench entry point (layout A): component map, chronological timeline and inspector.
-// The saved history plus SSE feed one attempt (connection.ts owns delivery). Evidence is written with textContent only.
+// Workbench entry point (layout A): component map, chronological timeline, inspector, final results and playback.
+// Two modes, always labelled. Saved recordings load once and are played back with the controls; a live
+// attempt is followed over the stream, and the selection follows the newest event only until the reader moves
+// away. connection.ts owns live delivery. Evidence is written with textContent only.
 
 import { buildComponentMap, updateComponentCounts } from "./components.js";
 import { Accepted, Progress, Recording, follow } from "./connection.js";
 import { el } from "./dom.js";
+import { renderFinal } from "./final.js";
 import { Inspector } from "./inspector.js";
 import { COMPONENTS, OPERATION_STARTS, TrackerEvent, componentOf } from "./model.js";
+import { Playback } from "./playback.js";
 
 const timeline = document.getElementById("timeline") as HTMLOListElement;
 const status = document.getElementById("status") as HTMLElement;
 const detail = document.getElementById("detail") as HTMLElement;
 const lag = document.getElementById("lag") as HTMLElement;
 const components = document.getElementById("components") as HTMLElement;
+const modeLine = document.getElementById("mode") as HTMLElement;
+const reportLink = document.getElementById("report-link") as HTMLAnchorElement;
+const finalPanel = document.getElementById("final") as HTMLElement;
+const controls = {
+  play: document.getElementById("play") as HTMLButtonElement,
+  previous: document.getElementById("previous") as HTMLButtonElement,
+  next: document.getElementById("next") as HTMLButtonElement,
+  speed: document.getElementById("speed") as HTMLSelectElement,
+  scrub: document.getElementById("scrub") as HTMLInputElement,
+  position: document.getElementById("position") as HTMLElement,
+  follow: document.getElementById("follow") as HTMLButtonElement,
+};
 const banner = el("p", "note");
 banner.id = "recording";
 banner.setAttribute("role", "status");
@@ -19,10 +35,12 @@ banner.hidden = true;
 status.after(banner);
 
 let inspector: Inspector;
+let playback: Playback;
+let mode: "live" | "saved" = "live";
 const events: TrackerEvent[] = [];
 const rows = new Map<number, HTMLLIElement>();
 let lastSequence = 0;
-let selectedSequence: number | null = null;
+let selectedIndex = -1;
 let activeComponent: string | null = null;
 let recording: Recording | null = null;
 
@@ -38,6 +56,10 @@ function describeRecording(next: Recording): string {
       return `Recording is incomplete: the final record was cut off (${next.torn_tail_bytes} bytes not verified).`;
     case "open":
       return "The attempt has not recorded its finish: it is still running, or it stopped without a final record.";
+    case "complete":
+      return `Recording complete: ${next.verified_events} events verified.`;
+    case "legacy":
+      return "Legacy first-live-pair trace, read only. Attempt starts and finishes, operation starts, Python phases, graph nodes, selected-point state and intermediate captures were not recorded, so none are shown. Fields marked derived were computed now from the saved bytes.";
     default:
       return "";
   }
@@ -49,6 +71,7 @@ function applyRecording(next: Recording): void {
   banner.textContent = text;
   banner.hidden = text === "";
   markRows();
+  setMode();
 }
 
 function describe(event: TrackerEvent): string {
@@ -108,6 +131,16 @@ function buildRow(event: TrackerEvent): HTMLLIElement {
   return row;
 }
 
+// Appends a recorded event without selecting it. Callers decide what the reader sees.
+function appendRow(event: TrackerEvent): void {
+  events.push(event);
+  lastSequence = event.sequence;
+  const row = buildRow(event);
+  rows.set(event.sequence, row);
+  timeline.append(row);
+  updateComponentCounts(components, events);
+}
+
 // Only accepted events reach the timeline: duplicates are dropped by the ledger, gaps and conflicts are explicit rows.
 function onAccepted(event: TrackerEvent, accepted: Accepted): void {
   if (accepted.kind === "duplicate") {
@@ -121,16 +154,12 @@ function onAccepted(event: TrackerEvent, accepted: Accepted): void {
     timeline.append(el("li", "gap", `missing events ${accepted.gap[0]} to ${accepted.gap[1]}`));
   }
   // Keep the inspector on the newest event only while the reader has not chosen another one.
-  const trackingLatest = selectedSequence === null || selectedSequence === lastSequence;
-  lastSequence = event.sequence;
-  events.push(event);
-  const row = buildRow(event);
-  rows.set(event.sequence, row);
-  timeline.append(row);
-  updateComponentCounts(components, events);
+  const trackingLatest = selectedIndex === -1 || selectedIndex === events.length - 1;
+  appendRow(event);
   if (trackingLatest) {
-    selectEvent(event.sequence);
+    selectIndex(events.length - 1);
   } else {
+    syncPlayback();
     markRows();
   }
 }
@@ -148,6 +177,7 @@ function markRows(): void {
   // A recording that stopped without an outcome can no longer deliver one: its starts are unresolved.
   const stopped = events.some((event) => event.type === "attempt_finished")
     || ["failed", "corrupt", "interrupted"].includes(recording?.state ?? "");
+  const selectedSequence = events[selectedIndex]?.sequence ?? null;
   const closed = new Set(
     events.filter((event) => event.operation_id && !OPERATION_STARTS.has(event.type))
       .map((event) => event.operation_id),
@@ -170,14 +200,40 @@ function markRows(): void {
   }
 }
 
-function selectEvent(sequence: number): void {
-  selectedSequence = sequence;
+function syncPlayback(): void {
+  playback.sync(events.length, selectedIndex, events[selectedIndex]?.sequence);
+}
+
+// The mode line says which mode is on and whether live following is active; it never implies either.
+function setMode(): void {
+  modeLine.dataset.mode = mode;
+  if (mode === "saved") {
+    modeLine.textContent = recording?.state === "legacy"
+      ? "Playback of the preserved legacy trace (read only). No model, tool or provider call is made."
+      : "Playback of a saved recording. Only recorded events are shown; no model, tool or provider call is made.";
+    return;
+  }
+  const following = events.length === 0 || selectedIndex === events.length - 1;
+  modeLine.textContent = following
+    ? "Live: following the newest recorded event."
+    : `Live: not following. Showing #${events[selectedIndex]?.sequence ?? "?"}; Follow latest resumes.`;
+}
+
+function selectIndex(index: number): void {
+  const event = events[index];
+  if (!event) {
+    return;
+  }
+  selectedIndex = index;
   activeComponent = null;
   markRows();
-  const event = events.find((item) => item.sequence === sequence);
-  if (event) {
-    void inspector.showEvent(events, event);
-  }
+  syncPlayback();
+  setMode();
+  void inspector.showEvent(events, event);
+}
+
+function selectEvent(sequence: number): void {
+  selectIndex(events.findIndex((item) => item.sequence === sequence));
 }
 
 function selectComponent(id: string): void {
@@ -191,21 +247,54 @@ function selectComponent(id: string): void {
   void inspector.showComponent(component, count);
 }
 
+// Saved recordings are read once. Every recorded event is shown; the selection starts on the last one.
+async function loadSaved(attemptId: string): Promise<void> {
+  mode = "saved";
+  const response = await fetch(`/api/attempts/${encodeURIComponent(attemptId)}/events?after=0`);
+  const body = (await response.json()) as { events: TrackerEvent[]; recording: Recording };
+  applyRecording(body.recording);
+  for (const event of body.events) {
+    appendRow(event);
+  }
+  // The same status vocabulary as the live stream: a stopped recording is a recording error, not "saved".
+  const stopped = body.recording.state === "failed" || body.recording.state === "corrupt";
+  status.textContent = stopped ? "recording-error" : "saved";
+  status.dataset.state = status.textContent;
+  lag.textContent = "";
+  detail.textContent = `${body.events.length} recorded events`;
+  if (events.length > 0) {
+    selectIndex(events.length - 1);
+  }
+}
+
 async function start(): Promise<void> {
-  const attempts = (await (await fetch("/api/attempts")).json()) as { attempt_id: string }[];
+  const attempts = (await (await fetch("/api/attempts")).json()) as { attempt_id: string; mode: string }[];
   if (attempts.length === 0) {
     status.textContent = "no attempts registered";
     return;
   }
-  const attemptId = attempts[0].attempt_id;
+  const requested = new URLSearchParams(window.location.search).get("attempt");
+  const chosen = attempts.find((item) => item.attempt_id === requested) ?? attempts[0];
+  const attemptId = chosen.attempt_id;
   inspector = new Inspector(
     attemptId,
     document.getElementById("inspector") as HTMLElement,
     document.getElementById("state") as HTMLElement,
     document.getElementById("evidence") as HTMLElement,
   );
+  playback = new Playback(controls, selectIndex);
   buildComponentMap(components, selectComponent);
-  follow(attemptId, { onAccepted, onProgress, onRecording: applyRecording });
+  reportLink.href = `/api/attempts/${encodeURIComponent(attemptId)}/report`;
+  reportLink.hidden = false;
+  void renderFinal(finalPanel, attemptId);
+  if (chosen.mode === "saved") {
+    await loadSaved(attemptId);
+  } else {
+    mode = "live";
+    follow(attemptId, { onAccepted, onProgress, onRecording: applyRecording });
+  }
+  setMode();
+  syncPlayback();
 }
 
 start().catch((error: unknown) => {

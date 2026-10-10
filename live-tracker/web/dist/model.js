@@ -1,6 +1,7 @@
 // Event shapes and pure selection rules for the workbench. No DOM here.
-// Only server-validated artifact paths are ever fetched.
-export const ARTIFACT_PATH = /^artifacts\/[0-9a-f]{64}$/;
+// Only server-validated artifact paths are ever fetched: content-addressed ones, and the preserved
+// legacy tool outputs by their recorded relative path.
+export const ARTIFACT_PATH = /^(artifacts\/[0-9a-f]{64}|tool-results\/event-\d{4}\.txt)$/;
 // Graph node components point at the shared functions their nodes run. Graph events select them by
 // node name, and Python phases by source, so the shared identities never collide.
 export const COMPONENTS = [

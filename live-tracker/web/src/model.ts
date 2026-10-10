@@ -7,6 +7,13 @@ export interface Artifact {
   sha256: string;
 }
 
+// What a legacy record lacks (unavailable), computed now from saved bytes (derived), or carried inline in the trace.
+export interface EventLabels {
+  unavailable: string[];
+  derived: string[];
+  inline: string[];
+}
+
 export interface TrackerEvent {
   sequence: number;
   type: string;
@@ -16,6 +23,8 @@ export interface TrackerEvent {
   parent_operation_id?: string;
   data: Record<string, any>;
   artifacts: Artifact[];
+  legacy?: boolean;
+  labels?: EventLabels;
 }
 
 export interface ComponentInfo {
@@ -24,8 +33,9 @@ export interface ComponentInfo {
   label: string;
 }
 
-// Only server-validated artifact paths are ever fetched.
-export const ARTIFACT_PATH = /^artifacts\/[0-9a-f]{64}$/;
+// Only server-validated artifact paths are ever fetched: content-addressed ones, and the preserved
+// legacy tool outputs by their recorded relative path.
+export const ARTIFACT_PATH = /^(artifacts\/[0-9a-f]{64}|tool-results\/event-\d{4}\.txt)$/;
 
 // Graph node components point at the shared functions their nodes run. Graph events select them by
 // node name, and Python phases by source, so the shared identities never collide.

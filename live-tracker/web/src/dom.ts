@@ -24,15 +24,19 @@ export function display(value: unknown): string {
 }
 
 // One labelled value on a single line, so text reads "key: value" in the page.
-export function kv(parent: Element, key: string, value: unknown): void {
+// `field` names the value for tests and cross-checks (data-field); it never changes what is shown.
+export function kv(parent: Element, key: string, value: unknown, field?: string): void {
   const missing = value === undefined || value === null || value === "";
   const line = el("p", "kv");
-  line.append(el("span", "k", key), document.createTextNode(": "),
-    el("span", missing ? "v missing" : "v", display(value)));
+  const shown = el("span", missing ? "v missing" : "v", display(value));
+  if (field) {
+    shown.dataset.field = field;
+  }
+  line.append(el("span", "k", key), document.createTextNode(": "), shown);
   parent.append(line);
 }
 
-export function block(parent: Element, title: string, value: unknown, className = ""): void {
+export function block(parent: Element, title: string, value: unknown, className = "", field?: string): void {
   parent.append(el("h4", "", title));
   let text: string;
   if (value === undefined || value === null) {
@@ -42,5 +46,9 @@ export function block(parent: Element, title: string, value: unknown, className 
   } else {
     text = JSON.stringify(value, null, 2);
   }
-  parent.append(el("pre", className, text));
+  const pre = el("pre", className, text);
+  if (field) {
+    pre.dataset.field = field;
+  }
+  parent.append(pre);
 }

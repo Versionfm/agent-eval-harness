@@ -12,6 +12,7 @@ import time
 from typing import Any, Mapping
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from live_tracker.projection import final_results, render_report
 from live_tracker.reader import read_attempt_history
 from live_tracker.sources import resolve_source
 
@@ -114,6 +115,10 @@ class _TrackerHandler(BaseHTTPRequestHandler):
                 return self._events(segments[3], directory, url.query)
             if action == "stream" and len(segments) == 5:
                 return self._stream(segments[3], directory, url.query)
+            if action == "final" and len(segments) == 5:
+                return self._final(directory)
+            if action == "report" and len(segments) == 5:
+                return self._report(directory)
             if action == "artifacts" and len(segments) >= 6:
                 return self._artifact(directory, "/".join(segments[5:]))
         self._json({"error": "not found"}, 404)
@@ -133,6 +138,9 @@ class _TrackerHandler(BaseHTTPRequestHandler):
             "event_count": len(history.events),
             "finished": bool(history.events) and history.events[-1]["type"] == "attempt_finished",
             "recording": history.status(),
+            # Live means the recording may still grow; anything else is replayed as saved evidence.
+            "mode": "live" if history.state in {"empty", "open"} else "saved",
+            "format": history.format,
         }
 
     def _cursor(self, attempt_id: str, query: str, latest: int) -> int:
@@ -197,7 +205,8 @@ class _TrackerHandler(BaseHTTPRequestHandler):
                 if head != reported:
                     reported = head
                     observer.offer(_sse({"latest_sequence": head}, event="head"))
-                if finished or history.state in {"corrupt", "failed"}:
+                # A preserved legacy trace never grows: its stream ends once its events are sent.
+                if finished or history.state in {"corrupt", "failed", "legacy"}:
                     break
                 if observer.gone.is_set():
                     return
@@ -212,6 +221,23 @@ class _TrackerHandler(BaseHTTPRequestHandler):
         except _Gone:
             pass
         observer.writer.join()
+
+    def _final(self, directory: Path) -> None:
+        try:
+            return self._json(final_results(directory))
+        except (OSError, ValueError, KeyError) as exc:
+            return self._json({"error": f"final results unavailable: {exc}"}, 500)
+
+    def _report(self, directory: Path) -> None:
+        try:
+            body = render_report(directory).encode("utf-8")
+        except (OSError, ValueError, KeyError) as exc:
+            return self._json({"error": f"report unavailable: {exc}"}, 500)
+        # The projected report holds recorded model and tool text: it may not run script or fetch anything.
+        self._send(200, "text/html; charset=utf-8", body, {
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+        })
 
     def _artifact(self, directory: Path, relative: str) -> None:
         root = directory.resolve()

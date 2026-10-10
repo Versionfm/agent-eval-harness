@@ -7,13 +7,14 @@ never appends, and never resumes or executes anything.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 from pathlib import Path
 import re
 from typing import Any
 
+from live_tracker.legacy import LABELS, LEGACY_FORMAT, TRACE_NAME, read_legacy_events
 from live_tracker.recorder import ARTIFACT_DIRECTORY, FAILURE_MARKER, LOG_NAME, SCHEMA, SCHEMA_VERSION
 
 
@@ -25,21 +26,25 @@ _VERIFIED: dict[str, tuple[int, int]] = {}
 
 @dataclass(frozen=True)
 class AttemptHistory:
-    state: str  # empty | open | interrupted | complete | failed | corrupt
+    state: str  # empty | open | interrupted | complete | failed | corrupt | legacy
     events: list[dict[str, Any]]
     problems: list[dict[str, Any]]
     torn_tail_bytes: int
     unresolved_operations: list[str]
     failure: dict[str, Any] | None
+    format: str = SCHEMA
+    labels: dict[str, Any] = field(default_factory=dict)
 
     def status(self) -> dict[str, Any]:
         return {
             "state": self.state,
+            "format": self.format,
             "verified_events": len(self.events),
             "torn_tail_bytes": self.torn_tail_bytes,
             "unresolved_operations": self.unresolved_operations,
             "problems": self.problems,
             "failure": self.failure,
+            "labels": self.labels,
         }
 
 
@@ -114,12 +119,21 @@ def _read_failure(directory: Path, problems: list[dict[str, Any]]) -> dict[str, 
     return failure
 
 
+def _legacy_history(directory: Path) -> AttemptHistory:
+    """A preserved trace without an event log: read-only, labelled, and never resumed or appended."""
+    events, problems = read_legacy_events(directory)
+    state = "corrupt" if problems else "legacy"
+    return AttemptHistory(state, events, problems, 0, [], None, format=LEGACY_FORMAT, labels=LABELS)
+
+
 def read_attempt_history(directory: Path) -> AttemptHistory:
     directory = Path(directory)
     problems: list[dict[str, Any]] = []
     failure = _read_failure(directory, problems)
     log = directory / LOG_NAME
     if not log.is_file():
+        if not failure and (directory / TRACE_NAME).is_file():
+            return _legacy_history(directory)
         return AttemptHistory("failed" if failure else "empty", [], problems, 0, [], failure)
 
     # Only bytes after the last newline can be an interrupted append; they are not verified records.

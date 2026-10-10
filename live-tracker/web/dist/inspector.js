@@ -50,6 +50,14 @@ export class Inspector {
             kv(root, "outcome", outcome ? `recorded at #${outcome.sequence} (${outcome.type})`
                 : "not recorded: waiting, or unresolved once the attempt has finished");
         }
+        if (event.legacy) {
+            root.append(el("p", "note", "Legacy trace record, shown as recorded. Nothing was added or re-timed."));
+        }
+        if (event.labels) {
+            kv(root, "not recorded for this event", event.labels.unavailable.join(", ") || "none");
+            kv(root, "derived (computed now from saved bytes)", event.labels.derived.join(", ") || "none");
+            kv(root, "inline in the legacy trace", event.labels.inline.join(", ") || "none");
+        }
         try {
             await this.renderBody(root, event);
         }
@@ -73,7 +81,10 @@ export class Inspector {
         const root = el("div");
         root.append(el("h2", "", "State at selected point"));
         const source = selectedPointState(events, event.sequence);
-        if (!source) {
+        if (!source && event.legacy) {
+            root.append(el("p", "note", "unavailable: the legacy trace records no selected-point state snapshots."));
+        }
+        else if (!source) {
             root.append(el("p", "note", "No state recorded at or before this selection yet."));
         }
         else {
@@ -135,7 +146,7 @@ export class Inspector {
             case "tool.start":
                 kv(root, "tool_name", data.tool_name);
                 kv(root, "tool_call_id", data.tool_call_id);
-                block(root, "arguments", data.arguments);
+                block(root, "arguments", data.arguments, "", "tool-arguments");
                 return;
             case "tool.outcome":
                 return this.renderToolOutcome(root, event);
@@ -175,15 +186,22 @@ export class Inspector {
         kv(root, "error", data.error);
         kv(root, "retrying", data.retrying);
         const artifact = event.artifacts.find((item) => item.role === "response.json");
-        if (!artifact) {
+        let response;
+        if (artifact) {
+            response = JSON.parse(await this.loadArtifact(artifact.path));
+        }
+        else if (data.response !== undefined) {
+            // A legacy trace carries the response inline; the labels above say so.
+            response = data.response;
+        }
+        else {
             kv(root, "provider response", "not recorded (no provider response for this outcome)");
             return;
         }
-        const response = JSON.parse(await this.loadArtifact(artifact.path));
         root.append(el("h3", "", "Model response"));
         kv(root, "observed_model", response.observed_model);
-        block(root, "content", response.content);
-        block(root, "provider-exposed reasoning (reasoning_content, as the provider returned it)", response.reasoning_fields?.reasoning_content);
+        block(root, "content", response.content, "", "response-content");
+        block(root, "provider-exposed reasoning (reasoning_content, as the provider returned it)", response.reasoning_fields?.reasoning_content, "", "reasoning");
         root.append(el("p", "note", "This is the reasoning field the provider exposed, not a full record of the model's internal reasoning."));
         const calls = response.tool_calls;
         if (calls === undefined) {
@@ -200,8 +218,8 @@ export class Inspector {
             root.append(item);
         }
         const usage = response.usage ?? {};
-        kv(root, "prompt_tokens", usage.prompt_tokens);
-        kv(root, "completion_tokens", usage.completion_tokens);
+        kv(root, "prompt_tokens", usage.prompt_tokens, "prompt-tokens");
+        kv(root, "completion_tokens", usage.completion_tokens, "completion-tokens");
         kv(root, "provider_finish_reason", usage.provider_finish_reason);
         if (usage.billing !== undefined) {
             block(root, "billing (as recorded)", usage.billing);
@@ -230,10 +248,10 @@ export class Inspector {
         const full = await this.loadArtifact(artifact.path);
         if (full.length > EXCERPT_CHARS) {
             root.append(el("p", "note", `presentation excerpt: the first ${EXCERPT_CHARS} of ${full.length} characters. The complete output is in the retained artifact (output.txt).`));
-            block(root, "presentation excerpt", full.slice(0, EXCERPT_CHARS), "excerpt");
+            block(root, "presentation excerpt", full.slice(0, EXCERPT_CHARS), "excerpt", "full-output");
         }
         else {
-            block(root, `full output (${full.length} characters)`, full);
+            block(root, `full output (${full.length} characters)`, full, "", "full-output");
         }
     }
     // A capture shows what the repository looks like after one mutating tool, relative to the attempt start.

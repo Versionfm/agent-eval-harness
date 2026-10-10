@@ -1,6 +1,6 @@
 # Live tracker
 
-Dedicated home for live observation and recorded playback of harness attempts. Specification: [issue #10](https://github.com/Versionfm/agent-eval-harness/issues/10). Status: tickets [#11](https://github.com/Versionfm/agent-eval-harness/issues/11) (one scripted Python attempt observed live), [#12](https://github.com/Versionfm/agent-eval-harness/issues/12) (interrupted recordings and recorder-failure handling), [#13](https://github.com/Versionfm/agent-eval-harness/issues/13) (the workbench: component map, timeline and inspector), [#15](https://github.com/Versionfm/agent-eval-harness/issues/15) (LangGraph node, router and state transitions through the same sink and workbench) and [#17](https://github.com/Versionfm/agent-eval-harness/issues/17) (reconnect, catch-up, bounded delivery and lag) and [#16](https://github.com/Versionfm/agent-eval-harness/issues/16) (repository changes after mutating tools) implemented. Playback and legacy adapters (#14) and the live comparison pair (#18) are deferred. The call chain and the selected-point experiment are in [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md).
+Dedicated home for live observation and recorded playback of harness attempts. Specification: [issue #10](https://github.com/Versionfm/agent-eval-harness/issues/10). Status: tickets [#11](https://github.com/Versionfm/agent-eval-harness/issues/11) (one scripted Python attempt observed live), [#12](https://github.com/Versionfm/agent-eval-harness/issues/12) (interrupted recordings and recorder-failure handling), [#13](https://github.com/Versionfm/agent-eval-harness/issues/13) (the workbench: component map, timeline and inspector), [#15](https://github.com/Versionfm/agent-eval-harness/issues/15) (LangGraph node, router and state transitions through the same sink and workbench) and [#17](https://github.com/Versionfm/agent-eval-harness/issues/17) (reconnect, catch-up, bounded delivery and lag) [#16](https://github.com/Versionfm/agent-eval-harness/issues/16) (repository changes after mutating tools) and [#14](https://github.com/Versionfm/agent-eval-harness/issues/14) (playback, legacy adapter, final results and projected report) implemented. The live comparison pair (#18) is deferred. The call chain and the selected-point experiment are in [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md).
 
 ## Reproduce the recovery behaviors (no provider, no Docker)
 
@@ -70,7 +70,7 @@ Known ceilings (deliberate): the stream re-reads the whole log each 0.2 s tick (
 
 The harness publishes through an optional `event_sink` (`agent_eval_harness/observation.py`) passed to `attempt_and_evaluate`. Without it, behavior is unchanged. The sink receives `attempt_started`, `initial_context`, `model.start`/`model.outcome` (`model-N`), `tool.start`/`tool.outcome` (`tool-N-I`, parent `model-N`) and `attempt_finished` (with the candidate patch). The recorder owns sequence, timestamps, elapsed time and artifact digests. Starts are emitted before the provider or tool call, outside its exception handling, so a failed start stops the attempt before any further operation. Outcomes and artifacts are written and fsynced before the event is appended. Observer data never enters model messages.
 
-Final `result.json` and `report.html` are still written from the in-memory trace after the attempt, next to the append-only `events.jsonl`; the log is never rewritten.
+Final `result.json` is still written from the in-memory trace after the attempt, next to the append-only `events.jsonl`; the log is never rewritten. For observed attempts `report.html` is then rendered from the log and linked artifacts (see Playback and final results below).
 
 ## Recording failure and recovery
 
@@ -114,6 +114,30 @@ PYTHONPATH=.:live-tracker/src python live-tracker/experiments/observation_overhe
 ```
 
 Measured once with 3 repeats (Docker, `workbench` scenario, both attempts `agent_completed/failure`, which is expected for a scripted non-repair). Mean attempt wall time: python-loop 2.60 s observed vs 2.68 s unobserved; langgraph 2.53 s observed vs 2.67 s unobserved. The observed runs were not slower; the spread between runs (about 2.4 to 3.2 s) is larger than any difference, so no overhead is distinguishable at this size. Time inside `emit` (record, fsync, artifact writes) was 0.06 s per attempt for python-loop (25 emits, 2.4 MB recorded) and 0.07 s for langgraph (35 emits, 2.3 MB). The snapshot computation is outside `emit` and is not timed separately. These are small scripted attempts; larger attempts were not measured.
+
+## Playback and final results (#14)
+
+Zero-cost inspection of the preserved first live pair (no provider key, no Docker). It registers the two legacy directories read-only and serves them on loopback:
+
+```bash
+PYTHONPATH=live-tracker/src python -m live_tracker.playback \
+  --legacy <evidence>/live-first-2026-10-10/python-loop --legacy <evidence>/live-first-2026-10-10/langgraph
+# prints "playback: http://127.0.0.1:8766/". Ctrl+C stops it. Saved attempts register the same way with --recording <attempt-directory>.
+```
+
+- **Two modes, always labelled.** A running attempt is *live*: the stream is followed and the selection stays on the newest event until you step away; "Follow latest" resumes. A completed, interrupted, failed or legacy recording is *saved*: its recorded events load once, and play/pause, speed, previous/next and scrub move through them. Playback reads evidence only. It never calls a model, a tool, a repository command or a provider, and it never appends or resumes.
+- **Legacy adapter** (`live_tracker/legacy.py`). It reads `trace.jsonl` and `tool-results/` without writing, and it maps each record to the viewer's event shape using the recorded `event_id` as the sequence. Labelled *not recorded*: attempt start and finish, operation starts (so no waiting or unresolved state), Python phases, graph nodes and routing, selected-point state, elapsed time, intermediate captures and the recording status. Labelled *derived*: the output digests, computed now from the current bytes, and the output links added after the run. Labelled *inline*: model responses carried in the trace. Nothing is re-timed or invented; the bytes are checked against `artifact-sha256.json` in tests.
+- **Final results.** The panel (`/api/attempts/<id>/final`) shows termination, verdict, failure category, recording status, Codex review, canonical checks and the candidate patch from the finish record. It does not change with the selection. The review is read from `review.json` at view time: the run records it as pending, and a complete `review.json` makes it completed.
+- **Report projection.** `/api/attempts/<id>/report` renders the harness report from the log and linked artifacts, not from the in-memory result, and shows the recording and review status. Observed runs also save `report.html` this way. `test_playback_browser_docker.py` asserts that the viewer and the report agree on response content, reasoning, tool arguments, retained output, accounting, verdict, checks and patch. The viewer shows the first 2000 characters of retained output and the report shows all of it.
+- **Why playback is not resumption.** Playback replays what was recorded and re-executes nothing. Resuming an agent would need the provider context rebuilt, a fresh paid model call, and tools run again against the repository. The recorder refuses to resume an existing log for that reason. A selection at event N shows only the state recorded by then; final totals are never used for earlier state. An interrupted recording stops at its verified prefix, and an unmatched start stays unresolved rather than counting as success.
+
+Tests (the browser acceptance builds three Docker attempts: complete, torn final record and refused mandatory write, then opens them with the legacy pair in system Chrome):
+
+```bash
+AGENT_EVAL_DOCKER_INTEGRATION=1 ML_TUTOR_ADMISSION_EVIDENCE=<admission.json> ML_TUTOR_REPOSITORY=<prompt-engineering-group-project> \
+  PYTHONPATH=live-tracker/src python -m unittest discover -s live-tracker/tests -t live-tracker/tests
+```
+
 
 ## Repository changes after mutating tools (#16)
 
@@ -184,8 +208,9 @@ Doubts and deferred items:
 - Implemented in #12: torn-tail, unresolved-operation, damaged-record and recorder-failure states in the reader, server and browser; the harness stop-on-recording-failure with separate recording status; the no-provider demo; fault-injection tests through real attempts; the Chrome recovery test.
 - Implemented in #17: cursor refusals, catch-up and handoff, client dedupe and gaps, bounded per-connection buffering with slow-consumer disconnect, connection state and lag (see above).
 - Implemented in #15: `node.enter`, `node.outcome`, `route.decision` and graph `state` events from `run_attempt_graph`; the LangGraph component entries (model node, tool node, router) with registered source links; `run_scripted --orchestrator langgraph`; the LangGraph Docker parity, browser and overhead checks described above. The sink is no longer refused for `langgraph`.
+- Implemented in #14: playback controls for saved recordings, the read-only legacy adapter for the first live pair, the final-results panel separate from the selected point, the report projected from the log with recording and Codex review status, the playback server mode and its no-provider proof, and browser parity tests (see below).
 - Implemented in #16: bounded repository capture after `apply_patch` and `run_shell` (see the section below), the `tool.capture` event, the inspector's capture section, the no-provider demo and the Docker, browser and overhead checks.
-- Deferred: legacy recording adapters and playback controls (#14), provider streaming, evaluation and report phase events, and a recording-status line in the static HTML report (the report shows only the harness error). The report is not yet re-rendered from the log (#14).
+- Deferred: provider streaming, evaluation and report phase events, and the comparison desk (#18).
 
 Read the [published tickets](docs/TICKETS.md), [specification](docs/SPEC.md), [design](docs/DESIGN.md), [learning sequence](docs/LEARNING_PLAN.md) and [decision interview](../docs/observability-interview.md). The disposable [layout prototype](../../harness-viewer-prototype.html?variant=A) is outside the production source tree. Its original builder/template and verdict are captured on local branch `prototype/live-tracker-layout` at `0024ce6243b62b31b2f6121758d2bbb0e9a44bb0`; this throwaway branch has not been pushed.
 

@@ -279,3 +279,38 @@ a {
 li[data-operation] .operation-state:not(:empty) {
   color: var(--text);
 }
+
+#playback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+#playback input[type="range"] {
+  flex: 1 1 180px;
+}
+
+#position {
+  font-variant-numeric: tabular-nums;
+}
+
+#mode[data-mode="saved"] {
+  font-weight: 600;
+}
+
+#final {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--line);
+}
+
+#final pre {
+  max-height: 16rem;
+  overflow: auto;
+}
+
+#status[data-state="saved"] {
+  font-weight: 600;
+}

@@ -11,13 +11,25 @@
     <h1>Live attempt workbench</h1>
     <p><span id="status" data-state="connecting">connecting</span> <span id="lag"></span></p>
     <p id="detail"></p>
+    <p id="mode" class="note" data-mode="live"></p>
+    <p><a id="report-link" href="#" hidden>Open the projected final report</a></p>
   </header>
+  <nav id="playback" aria-label="Playback controls">
+    <button id="previous" type="button">Previous</button>
+    <button id="play" type="button">Play</button>
+    <button id="next" type="button">Next</button>
+    <label>Speed <select id="speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option></select></label>
+    <input id="scrub" type="range" min="1" max="1" value="1" aria-label="Scrub recorded events">
+    <span id="position" aria-live="polite"></span>
+    <button id="follow" type="button">Follow latest</button>
+  </nav>
   <main class="workbench">
     <nav id="components" aria-label="Components"></nav>
     <section id="timeline-pane" aria-label="Timeline">
       <ol id="timeline" aria-live="polite"></ol>
     </section>
     <aside id="inspector-pane" aria-label="Inspector">
+      <section id="final" aria-label="Final results"><p class="note">Loading final results.</p></section>
       <section id="inspector"><p class="note">Select a component or an event.</p></section>
       <section id="state" aria-label="State at selected point"></section>
       <section id="evidence" aria-label="Retained artifacts"></section>

@@ -15,7 +15,9 @@ export interface TrackerEvent {
 
 // Recording completeness as the server reads it: separate from the termination reason and verdict.
 export interface Recording {
-  state: "empty" | "open" | "interrupted" | "complete" | "failed" | "corrupt";
+  state: "empty" | "open" | "interrupted" | "complete" | "failed" | "corrupt" | "legacy";
+  format?: string;
+  labels?: { unavailable: string[]; derived: string[]; note?: string };
   verified_events: number;
   torn_tail_bytes: number;
   unresolved_operations: string[];
