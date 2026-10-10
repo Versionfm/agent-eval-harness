@@ -1,10 +1,20 @@
 // Inspector (right pane): selected event or component, selected-point state, retained artifacts.
 // Evidence is rendered with textContent. Excerpts are labelled; full output stays one link away.
 
-import { ARTIFACT_PATH, ComponentInfo, OPERATION_STARTS, TrackerEvent, selectedPointState } from "./model.js";
+import { ARTIFACT_PATH, ComponentInfo, MUTATING_TOOLS, OPERATION_STARTS, TrackerEvent, selectedPointState } from "./model.js";
 import { block, display, el, kv } from "./dom.js";
 
 const EXCERPT_CHARS = 2000;
+
+// Each capture status is labelled apart: a declared omission is not a failure, and neither is a
+// settlement that is not established. None of them changes the attempt or the candidate.
+const CAPTURE_NOTES: Record<string, string> = {
+  captured: "Captured after the tool returned. Changes are relative to the attempt's starting repository.",
+  unsettled: "Not settled: a process was still alive after the shell returned, so no snapshot is shown.",
+  unavailable: "Settlement could not be established (the probe failed), so no change is shown.",
+  omitted: "Declared omission: a positive capture limit was reached, so no change is shown. This is bounded, not a failure.",
+  error: "Capture error (not a limit): the repository could not be described. This is not a tool or candidate result.",
+};
 
 interface SourceRecord {
   identity: string;
@@ -60,6 +70,14 @@ export class Inspector {
       await this.renderBody(root, event);
     } catch (error) {
       kv(root, "detail", `not available (${String(error)})`);
+    }
+    if (event.type === "tool.outcome" && MUTATING_TOOLS.has(event.data.tool_name)) {
+      const capture = events.find((item) => item.type === "tool.capture" && item.parent_operation_id === event.operation_id);
+      if (capture) {
+        this.renderCapture(root, capture);
+      } else {
+        kv(root, "repository capture", "not recorded (none follows this outcome yet, or recording stopped first)");
+      }
     }
     if (token === this.token) {
       this.panel.replaceChildren(root);
@@ -137,6 +155,9 @@ export class Inspector {
         return;
       case "tool.outcome":
         return this.renderToolOutcome(root, event);
+      case "tool.capture":
+        this.renderCapture(root, event);
+        return;
       default:
         block(root, "data", data);
     }
@@ -234,6 +255,67 @@ export class Inspector {
     } else {
       block(root, `full output (${full.length} characters)`, full);
     }
+  }
+
+  // A capture shows what the repository looks like after one mutating tool, relative to the attempt start.
+  // Diffs are previews; the complete text diffs and binary metadata are in the linked capture.json.
+  private renderCapture(root: HTMLElement, capture: TrackerEvent): void {
+    const data = capture.data;
+    const section = el("section", "capture");
+    section.dataset.captureStatus = String(data.status);
+    section.append(el("h3", "", "Repository changes after this tool"));
+    kv(section, "status", data.status);
+    if (data.reason) {
+      kv(section, "reason", data.reason);
+    }
+    section.append(el("p", "note", CAPTURE_NOTES[data.status] ?? "Unknown capture status."));
+    const settlement = data.settlement ?? {};
+    kv(section, "settlement", `${display(settlement.status)} via ${display(settlement.method)}`);
+    if (settlement.reason) {
+      kv(section, "settlement reason", settlement.reason);
+    }
+    if (settlement.live_processes) {
+      block(section, "processes alive after the tool returned", settlement.live_processes);
+    }
+    if (data.status === "captured") {
+      const totals = data.totals ?? {};
+      kv(section, "files changed", totals.files);
+      kv(section, "additions", totals.additions);
+      kv(section, "deletions", totals.deletions);
+      kv(section, "binary files (metadata only)", totals.binary_files);
+      for (const change of data.changes ?? []) {
+        const item = el("div", "change");
+        item.dataset.path = String(change.path);
+        kv(item, "path", change.path);
+        kv(item, "action", change.action);
+        kv(item, "kind", change.kind);
+        if (change.kind === "binary") {
+          item.append(el("p", "note", "Binary: metadata only, the contents are not shown."));
+          kv(item, "before", change.before ? `${change.before.bytes} bytes, sha256 ${change.before.sha256}` : "absent");
+          kv(item, "after", change.after ? `${change.after.bytes} bytes, sha256 ${change.after.sha256}` : "absent");
+        } else {
+          kv(item, "additions", change.additions);
+          kv(item, "deletions", change.deletions);
+          const label = `diff preview (up to ${data.limits?.max_preview_bytes} bytes${change.preview_truncated ? ", truncated" : ""})`;
+          block(item, label, change.preview, "preview");
+        }
+        section.append(item);
+      }
+      const artifact = capture.artifacts.find((item) => item.role === "capture.json");
+      const linkLine = el("p");
+      if (artifact && ARTIFACT_PATH.test(artifact.path)) {
+        const link = el("a", "", `full capture (${artifact.role}, ${artifact.bytes} bytes)`);
+        link.dataset.artifact = artifact.role;
+        link.href = this.artifactUrl(artifact.path);
+        linkLine.append(link);
+      } else {
+        linkLine.append(el("span", "missing", "full capture artifact not linked"));
+      }
+      section.append(linkLine);
+    }
+    kv(section, "capture seconds", data.capture_seconds);
+    block(section, "limits", data.limits);
+    root.append(section);
   }
 
   private async attachSource(root: Element, identity: string): Promise<void> {

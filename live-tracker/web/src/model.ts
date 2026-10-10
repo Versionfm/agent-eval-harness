@@ -52,6 +52,9 @@ const GRAPH_NODE_COMPONENT: Record<string, string> = {
 // Starts whose outcome may be missing; a missing outcome is shown as waiting or unresolved.
 export const OPERATION_STARTS = new Set(["node.enter", "model.start", "tool.start"]);
 
+// Tools whose outcome is followed by a repository capture (tool.capture, linked by parent_operation_id).
+export const MUTATING_TOOLS = new Set(["apply_patch", "run_shell"]);
+
 // The component whose registered source function produced the event, or null.
 export function componentOf(event: TrackerEvent): string | null {
   if (event.type === "phase.enter") {

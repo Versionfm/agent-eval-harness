@@ -23,6 +23,7 @@ from agent_eval_harness.attempt import (
     DEFAULT_ADMISSION_EVIDENCE, DEFAULT_SOURCE_REPOSITORY, ORCHESTRATION_ROOT,
     AdmittedTask, AttemptBudgets, attempt_and_evaluate,
 )
+from agent_eval_harness.capture import CaptureLimits
 from agent_eval_harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
 from agent_eval_harness.observation import AttemptEventSink
 from live_tracker.reader import read_attempt_history
@@ -64,7 +65,56 @@ def workbench_model() -> ScriptedModel:
     ])
 
 
-SCENARIOS = {"read": read_then_complete_model, "workbench": workbench_model}
+def _turn(name: str, arguments: dict[str, Any], call_id: str, note: str) -> ModelResponse:
+    return ModelResponse(
+        tool_calls=(ToolCall(name, arguments, call_id),),
+        reasoning_fields={"reasoning_content": note},
+        usage={"prompt_tokens": 12, "completion_tokens": 5},
+    )
+
+
+def mutations_model() -> ScriptedModel:
+    """Finite script of repository mutations, each captured after its tool (#16):
+    a successful patch (add), a failing shell that partially mutates two files (modify), a
+    deletion of a tracked document, a binary write, and a shell that writes a file and then
+    times out (the container is removed). The shell timeout for this scenario is 3 seconds."""
+    return ScriptedModel([
+        _turn("apply_patch", {"path": "notes/added.txt", "content": "first note\n"}, "patch-1",
+              "Create a note with a successful patch."),
+        _turn("run_shell", {"command": "printf 'second line\\n' >> notes/added.txt; "
+                                      "echo partial >> app/source.py; exit 3"},
+              "shell-fail-1", "Append to the note and the source, then fail."),
+        _turn("run_shell", {"command": "unlink docs/slides_outline.md"}, "shell-delete-1",
+              "Remove an outline that is not needed."),
+        _turn("run_shell", {"command": "printf '\\377\\376\\000\\001' > notes/blob.bin"}, "shell-binary-1",
+              "Write a small binary blob."),
+        _turn("run_shell", {"command": "printf 'partial\\n' > notes/timed.txt; sleep 30"}, "shell-timeout-1",
+              "Write a note and then wait too long."),
+        ModelResponse(content="The mutations were recorded; stopping without a repair."),
+    ])
+
+
+def background_model() -> ScriptedModel:
+    """Two writers that outlive their shell command (#16). The literal form keeps the output
+    pipe open, so the shell returns only after the writer exits. The detached form returns at
+    once with its writer still sleeping, so its capture must be unsettled."""
+    return ScriptedModel([
+        _turn("run_shell", {"command": "sh -c '(sleep 2; echo x > late.txt) &'"}, "bg-literal-1",
+              "Start a writer that finishes before the shell returns."),
+        _turn("run_shell", {"command": "sh -c '(sleep 2; echo y > detached.txt) >/dev/null 2>&1 &'"},
+              "bg-detached-1", "Start a detached writer."),
+        ModelResponse(content="Stopping after two background writers; no repair."),
+    ])
+
+
+SCENARIOS = {
+    "read": read_then_complete_model,
+    "workbench": workbench_model,
+    "mutations": mutations_model,
+    "background": background_model,
+}
+# Shell timeout per scenario; the default is the historical 60 seconds.
+SCENARIO_SHELL_TIMEOUT_SECONDS = {"mutations": 3, "background": 10}
 
 
 def run_attempt(
@@ -76,15 +126,20 @@ def run_attempt(
     event_sink: AttemptEventSink | None = None,
     scenario: str = "read",
     orchestrator: str = "python-loop",
+    capture_limits: CaptureLimits | None = None,
 ) -> dict[str, Any]:
     return attempt_and_evaluate(
         admitted_task=AdmittedTask.from_evidence(admission_evidence, source_repository=source_repository),
         model=model or SCENARIOS[scenario](),
         model_config=ModelConfig(provider="scripted", requested_model="scripted-read-then-complete-v1"),
-        budgets=AttemptBudgets(max_model_calls=4, shell_timeout_seconds=60),
+        budgets=AttemptBudgets(
+            max_model_calls=8 if scenario in SCENARIO_SHELL_TIMEOUT_SECONDS else 4,
+            shell_timeout_seconds=SCENARIO_SHELL_TIMEOUT_SECONDS.get(scenario, 60),
+        ),
         artifact_directory=output_dir,
         orchestrator=orchestrator,
         event_sink=event_sink,
+        capture_limits=capture_limits,
     )
 
 
