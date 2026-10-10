@@ -1,4 +1,4 @@
-"""Tool registry, validation, ordered dispatch, and model-visible results."""
+"""03 · Tools registry — tool definitions, ordered dispatch through hooks, and model-visible results."""
 
 from __future__ import annotations
 
@@ -7,11 +7,10 @@ import time
 from typing import Any
 
 from agent_eval_harness.harness.builtins import apply_patch, read_file, run_shell, search_text
-from agent_eval_harness.bench.capture import MUTATING_TOOLS, RepositoryCapture
 from agent_eval_harness.harness.context import _json_copy, _tool_output_for_model
 from agent_eval_harness.harness.permissions import DockerTaskContainer
 from agent_eval_harness.harness.model import ModelResponse, ToolCall
-from agent_eval_harness.harness.hooks import NULL_EVENT_SINK, AttemptEventSink
+from agent_eval_harness.harness.hooks import NO_TOOL_HOOKS, NULL_EVENT_SINK, AttemptEventSink, PreToolHook, ToolHooks
 from agent_eval_harness.harness.persistence import _record, _record_final
 
 
@@ -21,6 +20,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, str]] = {
     "apply_patch": {"description": "Create a file with path/content, or replace one exact old_text match with new_text."},
     "run_shell": {"description": "Run a shell command from the task repository root. Arguments: command."},
 }
+MUTATING_TOOLS = frozenset({"apply_patch", "run_shell"})
 
 
 def _dispatch_tool(
@@ -66,6 +66,15 @@ def _classify_tool_result(tool_name: str, result: dict[str, Any]) -> dict[str, A
     return normalized
 
 
+def _blocking_reason(pre: tuple[PreToolHook, ...], call: ToolCall) -> str | None:
+    """The first pre hook's reason to block the call, or None when every hook allows it."""
+    for hook in pre:
+        reason = hook(call)
+        if reason is not None:
+            return reason
+    return None
+
+
 def execute_tool_turn(
     *,
     response: ModelResponse,
@@ -76,7 +85,7 @@ def execute_tool_turn(
     work_deadline: float,
     trace: list[dict[str, Any]],
     event_sink: AttemptEventSink = NULL_EVENT_SINK,
-    repository_capture: RepositoryCapture | None = None,
+    hooks: ToolHooks = NO_TOOL_HOOKS,
 ) -> str | None:
     """Run one ordered tool node and append its bounded outputs to conversation state."""
     for index, call in enumerate(response.tool_calls, 1):
@@ -88,12 +97,19 @@ def execute_tool_turn(
                            "arguments": _json_copy(dict(call.arguments))},
             operation_id=operation_id, parent_operation_id=f"model-{model_call_count}",
         )
+        blocked_reason = _blocking_reason(hooks.pre, call)
         # The budget is measured after the start record: writing it takes time the tool did not spend.
         tool_started = time.monotonic()
         tool_remaining = work_deadline - tool_started
         default_timeout = float(budgets.shell_timeout_seconds) if call.name == "run_shell" else 30.0
-        dispatched = tool_remaining > 0
-        if tool_remaining <= 0:
+        dispatched = blocked_reason is None and tool_remaining > 0
+        if blocked_reason is not None:
+            tool_result = {
+                "status": "error", "output": "",
+                "error": f"blocked by hook: {blocked_reason}",
+                "exit_code": None, "error_category": "blocked_by_hook", "retryable": False,
+            }
+        elif tool_remaining <= 0:
             tool_result = {
                 "status": "error", "output": "",
                 "error": "Attempt deadline reached before tool execution",
@@ -151,10 +167,10 @@ def execute_tool_turn(
             {"output.txt": full_output.encode("utf-8", errors="replace")},
             operation_id=operation_id, parent_operation_id=f"model-{model_call_count}",
         )
-        # Observation only: the capture never changes the tool result, the messages or the candidate.
-        if repository_capture is not None and dispatched and call.name in MUTATING_TOOLS:
-            capture_data, capture_artifacts = repository_capture.observe(call.name)
-            event_sink.emit("tool.capture", capture_data, capture_artifacts, parent_operation_id=operation_id)
+        # Observation only: post hooks see a dispatched call's outcome and cannot change it.
+        if dispatched:
+            for hook in hooks.post:
+                hook(call, dict(tool_result), operation_id)
         messages.append({
             "role": "tool", "tool_call_id": tool_id, "name": call.name,
             "content": json.dumps(visible, ensure_ascii=False, sort_keys=True),

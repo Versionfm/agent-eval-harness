@@ -32,7 +32,6 @@ from agent_eval_harness.harness.hooks import json_artifact
 
 SCHEMA = "agent-eval-harness/repository-capture"
 SCHEMA_VERSION = 1
-MUTATING_TOOLS = frozenset({"apply_patch", "run_shell"})
 ARTIFACT_ROLE = "capture.json"
 
 # Read-only process listing, run inside the task container with `python -c`.

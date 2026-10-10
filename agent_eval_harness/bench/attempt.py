@@ -31,7 +31,8 @@ from agent_eval_harness.harness.model import (
     ToolCall,
 )
 from agent_eval_harness.harness.hooks import (
-    NULL_EVENT_SINK, AttemptEventSink, EventRecordingError, json_artifact,
+    NO_TOOL_HOOKS, NULL_EVENT_SINK, AttemptEventSink, EventRecordingError, PostToolHook, ToolHooks,
+    json_artifact,
 )
 from agent_eval_harness.bench.paths import orchestration_root
 from agent_eval_harness.reports.report import render_attempt_report
@@ -62,7 +63,7 @@ from agent_eval_harness.bench.provenance import (
     _dependency_versions, _harness_provenance,
 )
 from agent_eval_harness.harness.tools import (
-    TOOL_DEFINITIONS, _classify_tool_result, _dispatch_tool,
+    MUTATING_TOOLS, TOOL_DEFINITIONS, _classify_tool_result, _dispatch_tool,
     execute_tool_turn as _execute_tool_turn,
 )
 
@@ -295,6 +296,15 @@ def _selected_point_state(
     }
 
 
+def _capture_hook(repository_capture: RepositoryCapture, event_sink: AttemptEventSink) -> PostToolHook:
+    """Observed-only post hook: describe the repository after each dispatched mutating tool."""
+    def hook(call: ToolCall, result: dict[str, Any], operation_id: str) -> None:
+        if call.name in MUTATING_TOOLS:
+            capture_data, capture_artifacts = repository_capture.observe(call.name)
+            event_sink.emit("tool.capture", capture_data, capture_artifacts, parent_operation_id=operation_id)
+    return hook
+
+
 def _evaluate_candidate_changes(
     defect_repository: Path,
     changes: list[dict[str, Any]],
@@ -320,6 +330,7 @@ def attempt_and_evaluate(
     orchestrator: str = "python-loop",
     event_sink: AttemptEventSink | None = None,
     capture_limits: CaptureLimits | None = None,
+    tool_hooks: ToolHooks = NO_TOOL_HOOKS,
 ) -> dict[str, Any]:
     """Execute an explicit tool loop, capture its patch, and score a fresh defect copy.
 
@@ -327,6 +338,7 @@ def attempt_and_evaluate(
     starts and outcomes, and selected-point state. Mandatory emits are synchronous:
     if one raises, no further node, model or tool operation runs. An observed attempt
     also records bounded repository changes after mutating tools (capture_limits).
+    tool_hooks apply to both orchestrators; the observed capture runs after them.
     """
     sink: AttemptEventSink = NULL_EVENT_SINK if event_sink is None else event_sink
     artifact_directory = artifact_directory.expanduser().resolve()
@@ -430,6 +442,10 @@ def attempt_and_evaluate(
                 repository_capture = RepositoryCapture(
                     attempt_container, task_repository, defect_baseline, capture_limits,
                 )
+            post_hooks = tool_hooks.post
+            if repository_capture is not None:
+                post_hooks = (*post_hooks, _capture_hook(repository_capture, sink))
+            hooks = ToolHooks(pre=tool_hooks.pre, post=post_hooks)
             sink.emit("attempt_started", {
                 "task_id": admitted_task.task_id, "orchestrator": orchestrator,
                 "requested_model": model_config.requested_model, "provider": model_config.provider,
@@ -516,7 +532,7 @@ def attempt_and_evaluate(
                         work_deadline=work_deadline,
                         trace=trace,
                         event_sink=sink,
-                        repository_capture=repository_capture,
+                        hooks=hooks,
                     )
                     return {
                         "messages": graph_messages[previous_count:],
@@ -581,7 +597,7 @@ def attempt_and_evaluate(
                         work_deadline=work_deadline,
                         trace=trace,
                         event_sink=sink,
-                        repository_capture=repository_capture,
+                        hooks=hooks,
                     )
 
                 termination, model_call_count = run_python_loop(

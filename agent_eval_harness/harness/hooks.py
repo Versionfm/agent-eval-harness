@@ -1,16 +1,20 @@
-"""Optional observation sink for attempt lifecycle events.
+"""08 · Hooks — the attempt event sink, and pre/post hooks around each tool call.
 
 The harness only describes what happened. A sink (for example the live tracker
 recorder) decides sequence numbers, timestamps, storage and durability. The
-harness never imports the observer implementation.
+harness never imports the observer implementation. A pre tool hook can block a
+call before dispatch; a post tool hook observes a dispatched call. Repository
+capture is a post hook built in bench/attempt.py.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Protocol
+from dataclasses import dataclass
+from typing import Any, Callable, Iterable, Mapping, Protocol
 
 from agent_eval_harness.harness.context import _json_default
+from agent_eval_harness.harness.model import ToolCall
 
 
 def json_artifact(value: Any) -> bytes:
@@ -50,3 +54,24 @@ class NullEventSink:
 
 
 NULL_EVENT_SINK = NullEventSink()
+
+PreToolHook = Callable[[ToolCall], str | None]  # a reason to block the call, or None to allow it
+PostToolHook = Callable[[ToolCall, dict[str, Any], str], None]  # observes (call, full result, operation_id)
+
+
+@dataclass(frozen=True)
+class ToolHooks:
+    pre: tuple[PreToolHook, ...] = ()
+    post: tuple[PostToolHook, ...] = ()
+
+
+NO_TOOL_HOOKS = ToolHooks()
+
+
+def block_tools(names: Iterable[str], reason: str) -> PreToolHook:
+    blocked = frozenset(names)
+
+    def hook(call: ToolCall) -> str | None:
+        return reason if call.name in blocked else None
+
+    return hook
