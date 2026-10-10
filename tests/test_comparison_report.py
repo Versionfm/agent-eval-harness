@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agent_eval_harness.compare_report import main
+from agent_eval_harness.reports.compare_report import main
 
 
 class RecordedComparisonReportTests(unittest.TestCase):

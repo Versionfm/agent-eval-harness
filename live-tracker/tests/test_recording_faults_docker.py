@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_eval_harness import tools
-from agent_eval_harness.environment import DockerTaskContainer
+from agent_eval_harness.harness import tools
+from agent_eval_harness.harness.permissions import DockerTaskContainer
 from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder, FaultyStorage
 from live_tracker.run_scripted import read_then_complete_model, run_attempt

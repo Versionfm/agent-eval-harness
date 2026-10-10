@@ -3,7 +3,7 @@
 Usage: PYTHONPATH=live-tracker/src python -m live_tracker.run_matched --credential-file PATH
        [--artifact-dir DIR] [--port N] [--shared-budget-usd 0.10] [--smoke-budget-usd 0.01]
        [--attempt-budget-usd 0.04]
-The coordinator (agent_eval_harness.run_matched_comparison) still owns execution, the shared ledger,
+The coordinator (agent_eval_harness.cli.run_matched_comparison) still owns execution, the shared ledger,
 and the comparison report. This module only attaches one recorder per attempt, projects each finished
 attempt from its log, serves both attempts in the workbench, and writes live-pair.json with the
 retained accounting, overhead, pricing and pending review status. The output directory must not exist
@@ -22,16 +22,16 @@ import time
 from typing import Any, Callable, Mapping
 import uuid
 
-from agent_eval_harness import run_matched_comparison as coordinator
-from agent_eval_harness.attempt import DEFAULT_ADMISSION_EVIDENCE, DEFAULT_SOURCE_REPOSITORY, ORCHESTRATION_ROOT
-from agent_eval_harness.deepseek import (
+from agent_eval_harness.cli import run_matched_comparison as coordinator
+from agent_eval_harness.bench.attempt import DEFAULT_ADMISSION_EVIDENCE, DEFAULT_SOURCE_REPOSITORY, ORCHESTRATION_ROOT
+from agent_eval_harness.harness.deepseek import (
     PRICING_SOURCE_CHECKED_AT,
     PRICING_SOURCE_URL,
     USD_PER_MILLION_OFFPEAK,
     USD_PER_MILLION_PEAK,
     JsonTransport,
 )
-from agent_eval_harness.observation import AttemptEventSink
+from agent_eval_harness.harness.hooks import AttemptEventSink
 from live_tracker.projection import review_status, write_projection
 from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder, DurableStorage

@@ -3,8 +3,8 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 
-from agent_eval_harness.attempt import _initial_context
-from agent_eval_harness.report import render_attempt_report
+from agent_eval_harness.bench.attempt import _initial_context
+from agent_eval_harness.reports.report import render_attempt_report
 
 
 class SingleAttemptReportTests(unittest.TestCase):
@@ -123,9 +123,8 @@ class SingleAttemptReportTests(unittest.TestCase):
                 (root / ".github" / "assets" / f"image-{index:03}.svg").write_text("<svg/>")
             public_task = root / "task.md"
             public_task.write_text("Repair retrieval behavior.\n")
-            task = SimpleNamespace(public_task_path=public_task)
 
-            messages = _initial_context(task, root)
+            messages = _initial_context(public_task, root)
 
         file_map = messages[1]["content"]
         self.assertIn("app/source.py", file_map)

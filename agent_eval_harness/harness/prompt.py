@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from agent_eval_harness.attempt import AdmittedTask
 
 
-def _initial_context(task: AdmittedTask, task_repository: Path) -> list[dict[str, str]]:
-    from agent_eval_harness.tools import TOOL_DEFINITIONS
+def _initial_context(public_task_path: Path, task_repository: Path) -> list[dict[str, str]]:
+    from agent_eval_harness.harness.tools import TOOL_DEFINITIONS
 
-    public_task = task.public_task_path.read_text(encoding="utf-8")
+    public_task = public_task_path.read_text(encoding="utf-8")
     instructions_path = task_repository / "AGENTS.md"
     instructions = instructions_path.read_text(encoding="utf-8") if instructions_path.is_file() else ""
     files = sorted(

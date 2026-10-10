@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_eval_harness.observation import EventRecordingError
+from agent_eval_harness.harness.hooks import EventRecordingError
 from live_tracker.legacy import LEGACY_FORMAT
 from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder, FaultyStorage

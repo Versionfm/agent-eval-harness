@@ -12,13 +12,13 @@ PYTHONPATH=live-tracker/src python -m live_tracker.run_scripted --scenario workb
 
 Every step below is a real function. The sink publishes the event before the step runs (starts) or before the attempt advances (outcomes).
 
-1. `agent_eval_harness.attempt:attempt_and_evaluate` emits `attempt_started` and `initial_context`, then hands control to the loop.
-2. `agent_eval_harness.loop:run_python_loop` runs one loop step per model turn:
-   - `phase.enter` (`phase: model_request`, `source: agent_eval_harness.loop:_request_model_turn`)
-   - `agent_eval_harness.loop:_request_model_turn` checks the deadline, model-call and context budgets, then calls the provider. It emits `model.start` (`model-N`, with the full request as `request.json`) before the call and `model.outcome` (`model-N`, with the response as `response.json`) after it.
+1. `agent_eval_harness.bench.attempt:attempt_and_evaluate` emits `attempt_started` and `initial_context`, then hands control to the loop.
+2. `agent_eval_harness.harness.loop:run_python_loop` runs one loop step per model turn:
+   - `phase.enter` (`phase: model_request`, `source: agent_eval_harness.harness.loop:_request_model_turn`)
+   - `agent_eval_harness.harness.loop:_request_model_turn` checks the deadline, model-call and context budgets, then calls the provider. It emits `model.start` (`model-N`, with the full request as `request.json`) before the call and `model.outcome` (`model-N`, with the response as `response.json`) after it.
    - `state` (`after_phase: model_request`) snapshots budgets, context size, call counts, usage and cost after the response is recorded.
-   - `phase.enter` (`phase: tool_execution`, `source: agent_eval_harness.tools:execute_tool_turn`), only when the model asked for tools.
-   - `agent_eval_harness.tools:execute_tool_turn` emits `tool.start` (`tool-N-I`, parent `model-N`) before each dispatch and `tool.outcome` after it. The model-visible output and the full output (`output.txt`) are recorded separately.
+   - `phase.enter` (`phase: tool_execution`, `source: agent_eval_harness.harness.tools:execute_tool_turn`), only when the model asked for tools.
+   - `agent_eval_harness.harness.tools:execute_tool_turn` emits `tool.start` (`tool-N-I`, parent `model-N`) before each dispatch and `tool.outcome` after it. The model-visible output and the full output (`output.txt`) are recorded separately.
    - `state` (`after_phase: tool_execution`) after the tool results are in the conversation.
 3. The loop stops on a stop reason. `attempt_finished` carries the termination, checks and verdict.
 
@@ -61,11 +61,11 @@ The execution map (left pane, #13) draws the flow the attempt recorded: the Pyth
 
 The LangGraph orchestrator runs the same model and tool functions as the Python loop. What differs is who decides the next step: the graph's edges instead of a `while` loop.
 
-| Concern | Python loop (`loop.py`) | LangGraph (`langgraph_attempt.py`) |
+| Concern | Python loop (`harness/loop.py`) | LangGraph (`harness/graph.py`) |
 |---|---|---|
 | Control flow | `run_python_loop`: `while`, one `phase.enter` per phase | `StateGraph` with nodes `model_request` and `tool_execution` and conditional edges |
-| Model turn | `_request_model_turn` (budgets, retries, `model.start`/`model.outcome`) | same function, called from the `model_request` node (`graph_model_step` in `attempt.py`) |
-| Tool turn | `execute_tool_turn` (`tool.start`/`tool.outcome`) | same function, called from the `tool_execution` node (`graph_tool_step` in `attempt.py`) |
+| Model turn | `_request_model_turn` (budgets, retries, `model.start`/`model.outcome`) | same function, called from the `model_request` node (`graph_model_step` in `bench/attempt.py`) |
+| Tool turn | `execute_tool_turn` (`tool.start`/`tool.outcome`) | same function, called from the `tool_execution` node (`graph_tool_step` in `bench/attempt.py`) |
 | Step counting | none; the model-call budget is the only bound | `counted` wraps each node: `graph_step_count` +1 per node run; separate cap `graph_step_limit` (`max_graph_steps` or `2 * max_model_calls + 1`) |
 | Routing | `run_python_loop` checks the stop reason and `response.tool_calls` | `route_after_node`: stop reason, then no model response or no tool calls, then the graph-step cap, else the other node |
 | Snapshot | `state` after each phase (`_selected_point_state`) | `state` after each node, with the same function and `after_node`, `graph_step_count` |

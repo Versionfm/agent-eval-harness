@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _harness_provenance() -> dict[str, Any]:

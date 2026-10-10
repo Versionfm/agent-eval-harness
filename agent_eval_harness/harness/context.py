@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agent_eval_harness.model import ModelResponse
+from agent_eval_harness.harness.model import ModelResponse
 
 
 def _json_default(value: Any) -> Any:

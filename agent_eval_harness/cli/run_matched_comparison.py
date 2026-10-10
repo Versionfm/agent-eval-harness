@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 from typing import Any, Callable
 
-from agent_eval_harness.attempt import (
+from agent_eval_harness.bench.attempt import (
     AdmittedTask,
     AttemptBudgets,
     DEFAULT_ADMISSION_EVIDENCE,
@@ -23,9 +23,9 @@ from agent_eval_harness.attempt import (
     _harness_provenance,
     attempt_and_evaluate,
 )
-from agent_eval_harness.admission import task_package_evidence
-from agent_eval_harness.compare_report import build_comparison_report
-from agent_eval_harness.deepseek import (
+from agent_eval_harness.bench.admission import task_package_evidence
+from agent_eval_harness.reports.compare_report import build_comparison_report
+from agent_eval_harness.harness.deepseek import (
     DEFAULT_BASE_URL,
     PRICING_SOURCE_CHECKED_AT,
     PRICING_SOURCE_URL,
@@ -34,12 +34,12 @@ from agent_eval_harness.deepseek import (
     SpendBudget,
     _max_request_cost_usd,
 )
-from agent_eval_harness.deepseek_smoke import (
+from agent_eval_harness.cli.deepseek_smoke import (
     load_credential_file,
     run_smoke,
     write_smoke_artifact,
 )
-from agent_eval_harness.observation import AttemptEventSink
+from agent_eval_harness.harness.hooks import AttemptEventSink
 
 
 DEFAULT_PARITY_EVIDENCE = (

@@ -8,13 +8,13 @@ import threading
 import time
 from typing import Any, Callable
 
-from agent_eval_harness.context import _assistant_message, _context_size_bytes, _json_copy
-from agent_eval_harness.model import (
+from agent_eval_harness.harness.context import _assistant_message, _context_size_bytes, _json_copy
+from agent_eval_harness.harness.model import (
     ModelAdapter, ModelConfig, ModelRequest, ModelResponse, RequestBudgetExceeded,
     RetryableProviderError,
 )
-from agent_eval_harness.observation import NULL_EVENT_SINK, AttemptEventSink, json_artifact
-from agent_eval_harness.persistence import _record, _record_final
+from agent_eval_harness.harness.hooks import NULL_EVENT_SINK, AttemptEventSink, json_artifact
+from agent_eval_harness.harness.persistence import _record, _record_final
 
 
 def _record_model_outcome(
@@ -247,8 +247,8 @@ def _request_model_turn(
 
 
 # Source identities (module:function) the live tracker resolves to registered source excerpts.
-MODEL_PHASE_SOURCE = "agent_eval_harness.loop:_request_model_turn"
-TOOL_PHASE_SOURCE = "agent_eval_harness.tools:execute_tool_turn"
+MODEL_PHASE_SOURCE = "agent_eval_harness.harness.loop:_request_model_turn"
+TOOL_PHASE_SOURCE = "agent_eval_harness.harness.tools:execute_tool_turn"
 
 
 def run_python_loop(

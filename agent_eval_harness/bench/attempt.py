@@ -12,16 +12,15 @@ import tempfile
 import time
 from typing import Any, Mapping
 
-from agent_eval_harness.environment import (
-    DockerTaskContainer,
-    EnvironmentFailure,
+from agent_eval_harness.bench.environment import (
     build_task_environment,
     prepare_defective_repository,
     run_canonical_checks,
 )
-from agent_eval_harness.admission import task_package_evidence
-from agent_eval_harness.capture import CaptureLimits, RepositoryCapture
-from agent_eval_harness.model import (
+from agent_eval_harness.harness.permissions import DockerTaskContainer, EnvironmentFailure
+from agent_eval_harness.bench.admission import task_package_evidence
+from agent_eval_harness.bench.capture import CaptureLimits, RepositoryCapture
+from agent_eval_harness.harness.model import (
     ModelAdapter,
     ModelConfig,
     ModelRequest,
@@ -31,45 +30,44 @@ from agent_eval_harness.model import (
     ScriptedModel,
     ToolCall,
 )
-from agent_eval_harness.observation import (
+from agent_eval_harness.harness.hooks import (
     NULL_EVENT_SINK, AttemptEventSink, EventRecordingError, json_artifact,
 )
-from agent_eval_harness.paths import orchestration_root
-from agent_eval_harness.report import render_attempt_report
+from agent_eval_harness.bench.paths import orchestration_root
+from agent_eval_harness.reports.report import render_attempt_report
 
 # Stable facade imports: callers and existing experiments keep the attempt.py seam.
-from agent_eval_harness.builtins import apply_patch as container_apply_patch
-from agent_eval_harness.builtins import read_file as container_read_file
-from agent_eval_harness.builtins import run_shell as container_run_shell
-from agent_eval_harness.builtins import search_text as container_search_text
-from agent_eval_harness.context import (
+from agent_eval_harness.harness.builtins import apply_patch as container_apply_patch
+from agent_eval_harness.harness.builtins import read_file as container_read_file
+from agent_eval_harness.harness.builtins import run_shell as container_run_shell
+from agent_eval_harness.harness.builtins import search_text as container_search_text
+from agent_eval_harness.harness.context import (
     _assistant_message, _context_size_bytes, _json_copy, _json_default,
     _tool_output_for_model,
 )
-from agent_eval_harness.evaluation import (
+from agent_eval_harness.bench.evaluation import (
     _apply_candidate_changes, _candidate_changes, _candidate_diff,
     _finalize_evaluation, _materialize_snapshot, _safe_candidate_path,
     _snapshot_repository, collect_candidate,
     evaluate_candidate_changes as _evaluate_candidate_changes_impl,
 )
-from agent_eval_harness.loop import (
+from agent_eval_harness.harness.loop import (
     ModelCallDeadlineExceeded, _complete_with_deadline, _request_model_turn,
     run_python_loop,
 )
-from agent_eval_harness.persistence import (
-    _collect_artifacts, _record, _record_final, _timestamp,
-)
-from agent_eval_harness.prompt import build_initial_context as _initial_context
-from agent_eval_harness.provenance import (
+from agent_eval_harness.bench.artifacts import _collect_artifacts
+from agent_eval_harness.harness.persistence import _record, _record_final, _timestamp
+from agent_eval_harness.harness.prompt import build_initial_context as _initial_context
+from agent_eval_harness.bench.provenance import (
     _dependency_versions, _harness_provenance,
 )
-from agent_eval_harness.tools import (
+from agent_eval_harness.harness.tools import (
     TOOL_DEFINITIONS, _classify_tool_result, _dispatch_tool,
     execute_tool_turn as _execute_tool_turn,
 )
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ORCHESTRATION_ROOT = orchestration_root(REPOSITORY_ROOT)
 DEFAULT_TASK_PACKAGE = REPOSITORY_ROOT / "tasks" / "ml_tutor_retrieval"
 DEFAULT_ADMISSION_EVIDENCE = (
@@ -438,7 +436,7 @@ def attempt_and_evaluate(
                 "budgets": _json_copy(budgets.__dict__),
             })
 
-            messages = _initial_context(admitted_task, task_repository)
+            messages = _initial_context(admitted_task.public_task_path, task_repository)
             result["initial_context"] = copy.deepcopy(messages)
             result["metadata"]["initial_context_sha256"] = hashlib.sha256(
                 json.dumps(
@@ -473,7 +471,7 @@ def attempt_and_evaluate(
             snapshot = None if sink is NULL_EVENT_SINK else snapshot_state
             termination = "harness_error"
             if orchestrator == "langgraph":
-                from agent_eval_harness.langgraph_attempt import run_attempt_graph
+                from agent_eval_harness.harness.graph import run_attempt_graph
 
                 graph_step_limit = (
                     budgets.max_graph_steps

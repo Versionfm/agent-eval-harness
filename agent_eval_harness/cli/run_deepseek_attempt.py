@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import sys
 
-from agent_eval_harness.attempt import (
+from agent_eval_harness.bench.attempt import (
     DEFAULT_ADMISSION_EVIDENCE,
     DEFAULT_SOURCE_REPOSITORY,
     AdmittedTask,
@@ -16,13 +16,13 @@ from agent_eval_harness.attempt import (
     ModelConfig,
     attempt_and_evaluate,
 )
-from agent_eval_harness.deepseek import (
+from agent_eval_harness.harness.deepseek import (
     PRICING_SOURCE_CHECKED_AT,
     PRICING_SOURCE_URL,
     DeepSeekModelAdapter,
     SpendBudget,
 )
-from agent_eval_harness.deepseek_smoke import (
+from agent_eval_harness.cli.deepseek_smoke import (
     load_credential_file,
     run_smoke,
     write_smoke_artifact,
@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
             args.admission_evidence,
             source_repository=args.source_repository,
         )
-        harness_root = Path(__file__).resolve().parents[1]
+        harness_root = Path(__file__).resolve().parents[2]
         if artifact_root == harness_root or harness_root in artifact_root.parents:
             parser.error("artifact directory must be outside the harness Git repository")
         source_root = task.source_repository.resolve()

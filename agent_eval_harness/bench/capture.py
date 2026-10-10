@@ -25,9 +25,9 @@ import stat
 import time
 from typing import Any, Mapping
 
-from agent_eval_harness.environment import CommandTimeout, DockerTaskContainer, EnvironmentFailure, _run
-from agent_eval_harness.evaluation import _candidate_changes
-from agent_eval_harness.observation import json_artifact
+from agent_eval_harness.harness.permissions import CommandTimeout, DockerTaskContainer, EnvironmentFailure, _run
+from agent_eval_harness.bench.evaluation import _candidate_changes
+from agent_eval_harness.harness.hooks import json_artifact
 
 
 SCHEMA = "agent-eval-harness/repository-capture"

@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from agent_eval_harness.attempt import (
+from agent_eval_harness.bench.attempt import (
     AdmittedTask,
     AttemptBudgets,
     DEFAULT_ADMISSION_EVIDENCE,
@@ -18,8 +18,8 @@ from agent_eval_harness.attempt import (
     REPOSITORY_ROOT,
     attempt_and_evaluate,
 )
-from agent_eval_harness.admission import task_package_evidence
-from agent_eval_harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
+from agent_eval_harness.bench.admission import task_package_evidence
+from agent_eval_harness.harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
 
 
 DEFAULT_OUTPUT = (

@@ -11,13 +11,14 @@ import stat
 import tempfile
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
-from agent_eval_harness.admission import CHECK_IDS
-from agent_eval_harness.environment import EnvironmentFailure, run_canonical_checks
-from agent_eval_harness.observation import NULL_EVENT_SINK, AttemptEventSink
-from agent_eval_harness.persistence import _record_final
+from agent_eval_harness.bench.admission import CHECK_IDS
+from agent_eval_harness.bench.environment import run_canonical_checks
+from agent_eval_harness.harness.permissions import EnvironmentFailure
+from agent_eval_harness.harness.hooks import NULL_EVENT_SINK, AttemptEventSink
+from agent_eval_harness.harness.persistence import _record_final
 
 if TYPE_CHECKING:
-    from agent_eval_harness.attempt import AdmittedTask
+    from agent_eval_harness.bench.attempt import AdmittedTask
 
 
 def _snapshot_repository(root: Path) -> dict[str, tuple[bytes, int]]:

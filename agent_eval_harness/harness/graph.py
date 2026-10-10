@@ -12,8 +12,8 @@ from typing import Annotated, Any, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from agent_eval_harness.model import ModelResponse
-from agent_eval_harness.observation import NULL_EVENT_SINK, AttemptEventSink
+from agent_eval_harness.harness.model import ModelResponse
+from agent_eval_harness.harness.hooks import NULL_EVENT_SINK, AttemptEventSink
 
 
 class AttemptGraphState(TypedDict):
@@ -31,10 +31,10 @@ Snapshot = Callable[[list[dict[str, Any]], int], dict[str, Any]]
 
 # Source identities (module:function) the live tracker resolves to registered source excerpts.
 NODE_SOURCES = {
-    "model_request": "agent_eval_harness.loop:_request_model_turn",
-    "tool_execution": "agent_eval_harness.tools:execute_tool_turn",
+    "model_request": "agent_eval_harness.harness.loop:_request_model_turn",
+    "tool_execution": "agent_eval_harness.harness.tools:execute_tool_turn",
 }
-ROUTER_SOURCE = "agent_eval_harness.langgraph_attempt:route_after_node"
+ROUTER_SOURCE = "agent_eval_harness.harness.graph:route_after_node"
 NEXT_NODE = {"model_request": "tool_execution", "tool_execution": "model_request"}
 
 

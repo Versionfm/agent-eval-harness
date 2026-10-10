@@ -4,13 +4,13 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agent_eval_harness.attempt import (
+from agent_eval_harness.bench.attempt import (
     AdmittedTask,
     AttemptBudgets,
     ModelConfig,
     attempt_and_evaluate,
 )
-from agent_eval_harness.deepseek import DeepSeekModelAdapter, HttpResponse, SpendBudget
+from agent_eval_harness.harness.deepseek import DeepSeekModelAdapter, HttpResponse, SpendBudget
 
 
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"

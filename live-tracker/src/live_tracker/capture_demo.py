@@ -16,8 +16,8 @@ import sys
 import tempfile
 from typing import Any
 
-from agent_eval_harness.attempt import DEFAULT_ADMISSION_EVIDENCE, DEFAULT_SOURCE_REPOSITORY
-from agent_eval_harness.capture import CaptureLimits
+from agent_eval_harness.bench.attempt import DEFAULT_ADMISSION_EVIDENCE, DEFAULT_SOURCE_REPOSITORY
+from agent_eval_harness.bench.capture import CaptureLimits
 from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder
 from live_tracker.run_scripted import run_attempt

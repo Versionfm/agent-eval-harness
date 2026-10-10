@@ -17,14 +17,15 @@ import tarfile
 from typing import Any
 import uuid
 
-from agent_eval_harness.admission import (
+from agent_eval_harness.bench.admission import (
     CHECK_IDS, VARIANT_NAMES, assess_admission, task_package_evidence,
 )
-from agent_eval_harness.environment import _force_remove_container, run_canonical_checks
-from agent_eval_harness.paths import orchestration_root
+from agent_eval_harness.bench.environment import run_canonical_checks
+from agent_eval_harness.harness.permissions import _force_remove_container
+from agent_eval_harness.bench.paths import orchestration_root
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 TASK_ROOT = REPOSITORY_ROOT / "tasks" / "ml_tutor_retrieval"
 MANIFEST_PATH = TASK_ROOT / "manifest.json"
 DEFAULT_OUTPUT = orchestration_root(REPOSITORY_ROOT) / "evidence" / "issue-2"

@@ -111,11 +111,11 @@ class LoopbackServerTests(unittest.TestCase):
 
 
     def test_serves_only_registered_source_identities(self):
-        identity = "agent_eval_harness.loop:run_python_loop"
+        identity = "agent_eval_harness.harness.loop:run_python_loop"
         status, content_type, body = self._get(f"/api/sources?identity={identity}")
         self.assertEqual((status, content_type), (200, "application/json; charset=utf-8"))
         source = json.loads(body)
-        self.assertEqual(source["file"], "agent_eval_harness/loop.py")
+        self.assertEqual(source["file"], "agent_eval_harness/harness/loop.py")
         self.assertTrue(source["text"].startswith("def run_python_loop("))
 
         for query in ("identity=os:system", "identity=../../secret.txt", "identity="):

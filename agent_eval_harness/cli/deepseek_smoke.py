@@ -8,14 +8,14 @@ from pathlib import Path
 import time
 from typing import Any
 
-from agent_eval_harness.deepseek import (
+from agent_eval_harness.harness.deepseek import (
     DEFAULT_BASE_URL,
     PRICING_SOURCE_CHECKED_AT,
     PRICING_SOURCE_URL,
     DeepSeekModelAdapter,
     SpendBudget,
 )
-from agent_eval_harness.model import (
+from agent_eval_harness.harness.model import (
     ModelConfig,
     ModelRequest,
     RequestBudgetExceeded,

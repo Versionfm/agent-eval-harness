@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from agent_eval_harness.langgraph_attempt import run_attempt_graph
-from agent_eval_harness.model import ModelResponse, ToolCall
+from agent_eval_harness.harness.graph import run_attempt_graph
+from agent_eval_harness.harness.model import ModelResponse, ToolCall
 
 
 class RecordingSink:

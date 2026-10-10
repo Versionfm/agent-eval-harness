@@ -12,10 +12,10 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from agent_eval_harness import run_matched_comparison as coordinator
-from agent_eval_harness.compare_report import _load_attempt
-from agent_eval_harness.deepseek import HttpResponse
-from agent_eval_harness.run_langgraph_parity import main as parity_main
+from agent_eval_harness.cli import run_matched_comparison as coordinator
+from agent_eval_harness.reports.compare_report import _load_attempt
+from agent_eval_harness.harness.deepseek import HttpResponse
+from agent_eval_harness.cli.run_langgraph_parity import main as parity_main
 from live_tracker import run_matched as pair
 from live_tracker.projection import final_results
 from live_tracker.reader import read_attempt_history

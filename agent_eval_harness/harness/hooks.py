@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping, Protocol
 
-from agent_eval_harness.context import _json_default
+from agent_eval_harness.harness.context import _json_default
 
 
 def json_artifact(value: Any) -> bytes:

@@ -13,7 +13,7 @@ import time
 import unittest
 from dataclasses import replace
 
-from agent_eval_harness.attempt import (
+from agent_eval_harness.bench.attempt import (
     AdmittedTask,
     AttemptBudgets,
     ModelConfig,
@@ -22,7 +22,7 @@ from agent_eval_harness.attempt import (
     ToolCall,
     attempt_and_evaluate,
 )
-from agent_eval_harness.model import RetryableProviderError
+from agent_eval_harness.harness.model import RetryableProviderError
 
 
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"

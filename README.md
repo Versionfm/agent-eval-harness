@@ -11,7 +11,7 @@ The admission runner creates three disposable source copies, builds a digest-pin
 Provide a local ML Tutor checkout containing the pinned commit:
 
 ```bash
-python3 -m agent_eval_harness.admit \
+python3 -m agent_eval_harness.cli.admit \
   --source-repository /path/to/prompt-engineering-group-project
 ```
 
@@ -34,7 +34,7 @@ The explicit Python loop now drives a complete attempt with a scripted model ada
 Run it with the locally admitted task evidence and pinned ML Tutor checkout:
 
 ```bash
-python3 -m agent_eval_harness.run_scripted_attempt \
+python3 -m agent_eval_harness.cli.run_scripted_attempt \
   --admission-evidence /path/to/issue-2/admission.json \
   --source-repository /path/to/prompt-engineering-group-project \
   --output-dir /path/to/scripted-attempt
@@ -42,7 +42,7 @@ python3 -m agent_eval_harness.run_scripted_attempt \
 
 The command rebuilds the task image from the manifest's digest-pinned Dockerfile with Docker networking disabled, probes Python 3.12.13, and then uses the resolved image ID. The agent container has one writable mount at `/task`, no network, no evaluator mount, and no credentials or Docker socket. After collecting the patch, the harness stages it on a fresh defective copy and starts a read-only candidate worker to gather observations. The worker does not receive curator checks; the outer harness loads those checks and maps the observations to the canonical verdict.
 
-The explicit `while` loop in `loop.py` advances shared model-request and ordered tool-execution steps. Conversation messages carry through the attempt, provider retries and time limits are enforced for each request, and the next request receives the time remaining before the attempt deadline. Tool errors return to the model as structured results. Tool output sent to the model is bounded and marked when truncated; the full output remains in `tool-results/` and the trace. Numeric limits are configurable calibration proposals, not benchmark settings. See the [component map](docs/COMPONENT_MAP.md) for the call path and the Python-to-LangGraph mapping.
+The explicit `while` loop in `harness/loop.py` advances shared model-request and ordered tool-execution steps. Conversation messages carry through the attempt, provider retries and time limits are enforced for each request, and the next request receives the time remaining before the attempt deadline. Tool errors return to the model as structured results. Tool output sent to the model is bounded and marked when truncated; the full output remains in `tool-results/` and the trace. Numeric limits are configurable calibration proposals, not benchmark settings. See the [component map](docs/COMPONENT_MAP.md) for the call path and the Python-to-LangGraph mapping.
 
 The functional verdict stays independent of the termination reason: a completed attempt can fail canonical checks, and a budget-stopped repair can pass them. Provider and tool timeouts, context exhaustion, retries, and interruptions leave traces and candidate artifacts when the harness can collect them. Invalid patches, canonical check failures, and environment failures have separate categories. The evaluator has its own bounded timeout so it can score a partial candidate after agent execution stops. Scripted runs have unavailable cost; direct-provider runs separate reported charges, token-based estimates, missing usage, and conservative spend reservations. Qualitative review stays pending until a reviewer records it.
 
@@ -57,7 +57,7 @@ The direct adapter calls `https://api.deepseek.com/chat/completions` with `deeps
 Run the combined smoke and repair command only after creating a private text file containing the API key. The smoke uses at most 512 output tokens and must complete one provider-selected `search_text` call plus a follow-up response before the repair starts. It does not force `tool_choice`, and it never edits a repository or executes a shell command. Both stages stop before sending any request whose conservative peak-rate reservation would exceed its local or shared USD ceiling:
 
 ```bash
-python3 -m agent_eval_harness.run_deepseek_attempt \
+python3 -m agent_eval_harness.cli.run_deepseek_attempt \
   --credential-file /path/to/private/deepseek-api-key.txt \
   --admission-evidence /path/to/issue-2/admission.json \
   --source-repository /path/to/prompt-engineering-group-project \
@@ -69,7 +69,7 @@ The command defaults to USD 1.00 shared for the smoke and repair, USD 0.10 for t
 To run the smoke by itself, without starting a repair:
 
 ```bash
-python3 -m agent_eval_harness.deepseek_smoke \
+python3 -m agent_eval_harness.cli.deepseek_smoke \
   --credential-file /path/to/private/deepseek-api-key.txt \
   --artifact-dir /path/to/issue-5-smoke
 ```
@@ -81,7 +81,7 @@ The provider fixtures can be run offline with `python3 -m unittest tests.test_de
 This offline scripted attempt first requests an exact patch that cannot match. The tool returns an error to the model, which corrects the patch on its next turn. It then adds a new file and runs a command with a long result. The two-call proposal ends the attempt before a final model response; the independent evaluator still checks the collected patch.
 
 ```bash
-python3 -m agent_eval_harness.run_failure_recovery \
+python3 -m agent_eval_harness.cli.run_failure_recovery \
   --admission-evidence /path/to/issue-2/admission.json \
   --source-repository /path/to/prompt-engineering-group-project \
   --output-dir /path/to/failure-recovery
@@ -105,7 +105,7 @@ hosted model request; it does require Docker for the task and evaluator
 containers.
 
 ```bash
-.venv/bin/python -m agent_eval_harness.run_langgraph_parity \
+.venv/bin/python -m agent_eval_harness.cli.run_langgraph_parity \
   --admission-evidence /path/to/issue-2/admission.json \
   --source-repository /path/to/prompt-engineering-group-project \
   --output-dir /path/to/langgraph-parity
@@ -152,7 +152,7 @@ For example, compare the recorded successful control attempts without rerunning
 the parity experiment:
 
 ```bash
-python3 -m agent_eval_harness.compare_report \
+python3 -m agent_eval_harness.reports.compare_report \
   --python-loop /path/to/langgraph-parity/correct/python-loop \
   --langgraph /path/to/langgraph-parity/correct/langgraph \
   --output /path/to/issue-7/comparison.html

@@ -21,8 +21,8 @@ from typing import Any, Mapping
 import uuid
 from datetime import datetime, timezone
 
-from agent_eval_harness.context import _json_default
-from agent_eval_harness.observation import EventRecordingError
+from agent_eval_harness.harness.context import _json_default
+from agent_eval_harness.harness.hooks import EventRecordingError
 
 
 SCHEMA = "agent-eval-harness/attempt-events"

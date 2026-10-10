@@ -10,8 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_eval_harness.attempt import AdmittedTask, AttemptBudgets, attempt_and_evaluate
-from agent_eval_harness.model import ModelConfig, ModelResponse, RequestBudgetExceeded, ScriptedModel, ToolCall
+from agent_eval_harness.bench.attempt import AdmittedTask, AttemptBudgets, attempt_and_evaluate
+from agent_eval_harness.harness.model import ModelConfig, ModelResponse, RequestBudgetExceeded, ScriptedModel, ToolCall
 from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder
 

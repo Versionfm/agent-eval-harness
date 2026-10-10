@@ -16,8 +16,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agent_eval_harness.context import _json_default
-from agent_eval_harness.report import render_attempt_report
+from agent_eval_harness.harness.context import _json_default
+from agent_eval_harness.reports.report import render_attempt_report
 from live_tracker.legacy import LEGACY_FORMAT, TRACE_NAME
 from live_tracker.reader import AttemptHistory, read_attempt_history
 from live_tracker.recorder import SCHEMA

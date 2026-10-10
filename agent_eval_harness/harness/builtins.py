@@ -6,7 +6,7 @@ import json
 import subprocess
 from typing import Any
 
-from agent_eval_harness.environment import (
+from agent_eval_harness.harness.permissions import (
     CommandTimeout, DockerTaskContainer, EnvironmentFailure, _safe_relative_path,
 )
 

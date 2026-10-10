@@ -6,13 +6,13 @@ import json
 import time
 from typing import Any
 
-from agent_eval_harness.builtins import apply_patch, read_file, run_shell, search_text
-from agent_eval_harness.capture import MUTATING_TOOLS, RepositoryCapture
-from agent_eval_harness.context import _json_copy, _tool_output_for_model
-from agent_eval_harness.environment import DockerTaskContainer
-from agent_eval_harness.model import ModelResponse, ToolCall
-from agent_eval_harness.observation import NULL_EVENT_SINK, AttemptEventSink
-from agent_eval_harness.persistence import _record, _record_final
+from agent_eval_harness.harness.builtins import apply_patch, read_file, run_shell, search_text
+from agent_eval_harness.bench.capture import MUTATING_TOOLS, RepositoryCapture
+from agent_eval_harness.harness.context import _json_copy, _tool_output_for_model
+from agent_eval_harness.harness.permissions import DockerTaskContainer
+from agent_eval_harness.harness.model import ModelResponse, ToolCall
+from agent_eval_harness.harness.hooks import NULL_EVENT_SINK, AttemptEventSink
+from agent_eval_harness.harness.persistence import _record, _record_final
 
 
 TOOL_DEFINITIONS: dict[str, dict[str, str]] = {

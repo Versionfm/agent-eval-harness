@@ -9,31 +9,42 @@ from typing import Any
 
 
 REGISTERED_SOURCES: dict[str, str] = {
-    "agent_eval_harness.attempt:attempt_and_evaluate": (
+    "agent_eval_harness.bench.attempt:attempt_and_evaluate": (
         "Attempt lifecycle: prepares the task container, runs the selected orchestrator, "
         "collects the candidate, evaluates it and writes the evidence."
     ),
-    "agent_eval_harness.loop:run_python_loop": (
+    "agent_eval_harness.harness.loop:run_python_loop": (
         "Python loop: alternates the model request phase and the tool execution phase "
         "until a shared stop reason ends the attempt."
     ),
-    "agent_eval_harness.loop:_request_model_turn": (
+    "agent_eval_harness.harness.loop:_request_model_turn": (
         "Model request phase: enforces deadline, context and call budgets, calls the provider "
         "with the retry policy and records one model outcome."
     ),
-    "agent_eval_harness.tools:execute_tool_turn": (
+    "agent_eval_harness.harness.tools:execute_tool_turn": (
         "Tool execution phase: runs the model's tool calls in order, bounds the model-visible "
         "output and appends each tool result to the conversation."
     ),
-    "agent_eval_harness.langgraph_attempt:route_after_node": (
+    "agent_eval_harness.harness.graph:route_after_node": (
         "LangGraph router: after each node, chooses the next node or the end from the recorded "
         "stop reason, the model's tool calls and the separate graph-step budget."
     ),
 }
 
 
+# Saved event logs record the identities from before the harness layout move; each resolves to its new source.
+LEGACY_IDENTITIES: dict[str, str] = {
+    "agent_eval_harness.attempt:attempt_and_evaluate": "agent_eval_harness.bench.attempt:attempt_and_evaluate",
+    "agent_eval_harness.loop:run_python_loop": "agent_eval_harness.harness.loop:run_python_loop",
+    "agent_eval_harness.loop:_request_model_turn": "agent_eval_harness.harness.loop:_request_model_turn",
+    "agent_eval_harness.tools:execute_tool_turn": "agent_eval_harness.harness.tools:execute_tool_turn",
+    "agent_eval_harness.langgraph_attempt:route_after_node": "agent_eval_harness.harness.graph:route_after_node",
+}
+
+
 def resolve_source(identity: str) -> dict[str, Any]:
     """Return the registered function's file, line range and source text; refuse anything else."""
+    identity = LEGACY_IDENTITIES.get(identity, identity)
     if identity not in REGISTERED_SOURCES:
         raise KeyError(f"unregistered source identity: {identity}")
     module_name, function_name = identity.split(":")
