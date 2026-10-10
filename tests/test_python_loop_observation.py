@@ -69,7 +69,7 @@ class PythonLoopObservationTests(unittest.TestCase):
             [event_type for event_type, _, _ in sink.events],
             ["phase.enter", "model.start", "model.outcome", "state",
              "phase.enter", "state",
-             "phase.enter", "model.start", "model.outcome", "state"],
+             "phase.enter", "model.start", "model.outcome", "termination", "state"],
         )
         phases = [(data["phase"], data["source"], data["loop_step"])
                   for event_type, data, _ in sink.events if event_type == "phase.enter"]

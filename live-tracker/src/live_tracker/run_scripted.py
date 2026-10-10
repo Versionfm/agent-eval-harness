@@ -27,7 +27,7 @@ from agent_eval_harness.capture import CaptureLimits
 from agent_eval_harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
 from agent_eval_harness.observation import AttemptEventSink
 from live_tracker.reader import read_attempt_history
-from live_tracker.projection import write_report
+from live_tracker.projection import write_projection
 from live_tracker.recorder import AttemptRecorder
 from live_tracker.server import make_server
 
@@ -143,8 +143,8 @@ def run_attempt(
         capture_limits=capture_limits,
     )
     if event_sink is not None:
-        # The observed report is projected from the log, replacing the in-memory render.
-        write_report(output_dir)
+        # The observed result, trace and report are projections of the log (ADR 0005).
+        write_projection(output_dir)
     return result
 
 

@@ -14,7 +14,7 @@ from agent_eval_harness.model import (
     RetryableProviderError,
 )
 from agent_eval_harness.observation import NULL_EVENT_SINK, AttemptEventSink, json_artifact
-from agent_eval_harness.persistence import _record
+from agent_eval_harness.persistence import _record, _record_final
 
 
 def _record_model_outcome(
@@ -76,14 +76,14 @@ def _request_model_turn(
     """Run one shared model node, including deadline, context, and retry policy."""
     if time.monotonic() >= work_deadline:
         termination = "attempt_deadline"
-        _record(
-            trace, "termination", reason=termination,
+        _record_final(
+            trace, event_sink, "termination", reason=termination,
             attempt_deadline_seconds=budgets.attempt_deadline_seconds,
         )
         return None, model_call_count, termination
     if model_call_count >= budgets.max_model_calls:
         termination = "model_call_budget"
-        _record(trace, "termination", reason=termination, model_calls=model_call_count)
+        _record_final(trace, event_sink, "termination", reason=termination, model_calls=model_call_count)
         return None, model_call_count, termination
 
     context_bytes = _context_size_bytes(messages)
@@ -91,8 +91,8 @@ def _request_model_turn(
     if context_bytes > budgets.max_context_bytes:
         termination = "context_budget"
         result["metadata"]["context_bytes_at_stop"] = context_bytes
-        _record(
-            trace, "termination", reason=termination,
+        _record_final(
+            trace, event_sink, "termination", reason=termination,
             context_bytes=context_bytes, max_context_bytes=budgets.max_context_bytes,
         )
         return None, model_call_count, termination
@@ -105,11 +105,11 @@ def _request_model_turn(
     while response is None and termination is None:
         if time.monotonic() >= work_deadline:
             termination = "attempt_deadline"
-            _record(trace, "termination", reason=termination, model_calls=model_call_count)
+            _record_final(trace, event_sink, "termination", reason=termination, model_calls=model_call_count)
             break
         if model_call_count >= budgets.max_model_calls:
             termination = "model_call_budget"
-            _record(trace, "termination", reason=termination, model_calls=model_call_count)
+            _record_final(trace, event_sink, "termination", reason=termination, model_calls=model_call_count)
             break
         request = ModelRequest(
             messages=copy.deepcopy(messages),
@@ -145,7 +145,7 @@ def _request_model_turn(
                 retrying=False, spend_budget=budget_snapshot,
             )
             termination = "spending_budget"
-            _record(trace, "termination", reason=termination, model_calls=model_call_count)
+            _record_final(trace, event_sink, "termination", reason=termination, model_calls=model_call_count)
         except ModelCallDeadlineExceeded as exc:
             duration = time.monotonic() - call_started
             _record_model_outcome(
@@ -185,7 +185,7 @@ def _request_model_turn(
                     "model_call_budget"
                     if model_call_count >= budgets.max_model_calls else "provider_error"
                 )
-                _record(trace, "termination", reason=termination, model_calls=model_call_count)
+                _record_final(trace, event_sink, "termination", reason=termination, model_calls=model_call_count)
                 break
             request_retry_count += 1
             result["metadata"]["retry_count"] = result["metadata"].get("retry_count", 0) + 1
@@ -193,7 +193,7 @@ def _request_model_turn(
                 time.sleep(delay)
             if time.monotonic() >= work_deadline:
                 termination = "attempt_deadline"
-                _record(trace, "termination", reason=termination, model_calls=model_call_count)
+                _record_final(trace, event_sink, "termination", reason=termination, model_calls=model_call_count)
         except Exception as exc:
             duration = time.monotonic() - call_started
             _record_model_outcome(
@@ -203,7 +203,7 @@ def _request_model_turn(
                 retrying=False,
             )
             termination = "provider_error"
-            _record(trace, "termination", reason=termination, model_calls=model_call_count)
+            _record_final(trace, event_sink, "termination", reason=termination, model_calls=model_call_count)
 
     if response is None:
         return None, model_call_count, termination or "provider_error"
@@ -234,15 +234,15 @@ def _request_model_turn(
     messages.append(_assistant_message(response))
     if usage.get("provider_finish_reason") == "length":
         termination = "provider_output_limit"
-        _record(
-            trace, "termination", reason=termination,
+        _record_final(
+            trace, event_sink, "termination", reason=termination,
             error_category="provider_output_limit", provider_finish_reason="length",
             model_calls=model_call_count,
         )
         return response, model_call_count, termination
     if not response.tool_calls:
         termination = "agent_completed"
-        _record(trace, "termination", reason=termination, model_calls=model_call_count)
+        _record_final(trace, event_sink, "termination", reason=termination, model_calls=model_call_count)
     return response, model_call_count, termination
 
 

@@ -47,7 +47,7 @@ class SinkLifecycleTests(unittest.TestCase):
         self.assertEqual((count, stop), (1, "agent_completed"))
         self.assertEqual(
             [(kind, op) for kind, op, _, _ in sink.events],
-            [("model.start", "model-1"), ("model.outcome", "model-1")],
+            [("model.start", "model-1"), ("model.outcome", "model-1"), ("termination", None)],
         )
         self.assertEqual(sink.events[1][3]["status"], "ok")
 

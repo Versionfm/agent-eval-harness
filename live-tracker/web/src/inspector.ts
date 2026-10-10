@@ -185,7 +185,7 @@ export class Inspector {
     kv(root, "source", data.source);
     const link = el("a", "", "registered source record (JSON)");
     link.dataset.source = data.source;
-    link.href = `/api/sources?identity=${encodeURI(String(data.source))}`;
+    link.href = `/api/sources?identity=${encodeURIComponent(String(data.source))}`;
     link.target = "_blank";
     link.rel = "noopener";
     const linkLine = el("p");
@@ -368,7 +368,7 @@ export class Inspector {
   private loadSource(identity: string): Promise<SourceRecord> {
     let pending = this.sources.get(identity);
     if (!pending) {
-      pending = fetch(`/api/sources?identity=${encodeURI(identity)}`).then(async (response) => {
+      pending = fetch(`/api/sources?identity=${encodeURIComponent(identity)}`).then(async (response) => {
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }

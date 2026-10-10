@@ -10,6 +10,7 @@ import os
 import unittest
 from pathlib import Path
 
+from live_tracker.legacy import LEGACY_FORMAT
 from live_tracker.reader import read_attempt_history
 
 
@@ -36,7 +37,7 @@ class LegacyPlaybackTests(unittest.TestCase):
     def test_reading_the_first_live_pair_changes_no_byte(self):
         before = _tree_digests(LEGACY_ROOT)
         for name in PAIR:
-            history = read_attempt_history(LEGACY_ROOT / name)
+            history = read_attempt_history(LEGACY_ROOT / name, format=LEGACY_FORMAT)
             self.assertEqual(history.state, "legacy")
         self.assertEqual(_tree_digests(LEGACY_ROOT), before)
 
@@ -53,7 +54,7 @@ class LegacyPlaybackTests(unittest.TestCase):
     def test_legacy_history_fabricates_no_starts_phases_nodes_or_state(self):
         for name in PAIR:
             with self.subTest(pair=name):
-                history = read_attempt_history(LEGACY_ROOT / name)
+                history = read_attempt_history(LEGACY_ROOT / name, format=LEGACY_FORMAT)
                 types = {event["type"] for event in history.events}
                 self.assertFalse(types & NEW_ONLY_TYPES, types & NEW_ONLY_TYPES)
                 status = history.status()
@@ -71,7 +72,7 @@ class LegacyPlaybackTests(unittest.TestCase):
     def test_recorded_counts_match_the_legacy_trace(self):
         counts = {}
         for name in PAIR:
-            history = read_attempt_history(LEGACY_ROOT / name)
+            history = read_attempt_history(LEGACY_ROOT / name, format=LEGACY_FORMAT)
             counts[name] = (
                 sum(event["type"] == "model.outcome" for event in history.events),
                 sum(event["type"] == "tool.outcome" for event in history.events),
@@ -79,7 +80,7 @@ class LegacyPlaybackTests(unittest.TestCase):
         self.assertEqual(counts, {"python-loop": (8, 15), "langgraph": (10, 14)})
 
     def test_tool_outputs_link_to_preserved_files_with_derived_digests_labelled(self):
-        history = read_attempt_history(LEGACY_ROOT / "python-loop")
+        history = read_attempt_history(LEGACY_ROOT / "python-loop", format=LEGACY_FORMAT)
         tools = [event for event in history.events if event["type"] == "tool.outcome"]
         self.assertTrue(tools)
         for event in tools:
@@ -94,7 +95,7 @@ class LegacyPlaybackTests(unittest.TestCase):
                 self.assertNotIn("output", event["data"]["result"], "full output stays in its artifact")
 
     def test_model_response_is_inline_and_labelled_as_recorded_in_the_trace(self):
-        history = read_attempt_history(LEGACY_ROOT / "langgraph")
+        history = read_attempt_history(LEGACY_ROOT / "langgraph", format=LEGACY_FORMAT)
         model = next(event for event in history.events if event["type"] == "model.outcome")
         trace_line = next(
             json.loads(line) for line in (LEGACY_ROOT / "langgraph" / "trace.jsonl").read_text().splitlines()

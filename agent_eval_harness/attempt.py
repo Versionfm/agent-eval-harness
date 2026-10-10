@@ -57,7 +57,7 @@ from agent_eval_harness.loop import (
     run_python_loop,
 )
 from agent_eval_harness.persistence import (
-    _collect_artifacts, _record, _timestamp,
+    _collect_artifacts, _record, _record_final, _timestamp,
 )
 from agent_eval_harness.prompt import build_initial_context as _initial_context
 from agent_eval_harness.provenance import (
@@ -399,6 +399,7 @@ def attempt_and_evaluate(
     model_call_count = 0
     usage_records = []
     harness_error: str | None = None
+    evaluation_category: str | None = None
 
     try:
         image_evidence = build_task_environment(
@@ -456,7 +457,8 @@ def attempt_and_evaluate(
                 messages=messages,
             )
             sink.emit(
-                "initial_context", {"message_count": len(messages), "tool_definitions": TOOL_DEFINITIONS},
+                "initial_context", {"status": "ready", "message_count": len(messages),
+                                    "tool_definitions": TOOL_DEFINITIONS},
                 {"messages.json": json_artifact(messages)},
             )
 
@@ -544,8 +546,8 @@ def attempt_and_evaluate(
                     else "derived_from_model_call_budget"
                 )
                 if termination == "graph_step_budget":
-                    _record(
-                        trace, "termination", reason=termination,
+                    _record_final(
+                        trace, sink, "termination", reason=termination,
                         graph_steps=graph_state["graph_step_count"],
                         max_graph_steps=graph_step_limit,
                         model_calls=model_call_count,
@@ -616,17 +618,16 @@ def attempt_and_evaluate(
                     "patch": "",
                     "collection_error": str(exc),
                 }
-                _record(
-                    trace, "patch_collection", status="unavailable",
+                _record_final(
+                    trace, sink, "patch_collection", status="unavailable",
                     error_category="invalid_patch", error=str(exc),
                 )
                 result["evaluation"] = {
                     "status": "invalid_patch", "checks": {}, "error": str(exc)
                 }
             else:
-                _record(
-                    trace,
-                    "patch_collection",
+                _record_final(
+                    trace, sink, "patch_collection",
                     status="completed",
                     changed_files=result["candidate"]["changed_files"],
                     change_count=len(changes),
@@ -640,9 +641,9 @@ def attempt_and_evaluate(
                     admitted_task=admitted_task,
                     timeout_seconds=budgets.evaluation_timeout_seconds,
                 )
-                _finalize_evaluation(result, evaluation, trace)
+                evaluation_category = _finalize_evaluation(result, evaluation, trace, sink)
             elif result["candidate"].get("status") == "unavailable":
-                _finalize_evaluation(result, result["evaluation"], trace)
+                evaluation_category = _finalize_evaluation(result, result["evaluation"], trace, sink)
     except KeyboardInterrupt as exc:
         result["termination_reason"] = "interrupted"
         result["functional_verdict"] = "invalid_environment"
@@ -651,8 +652,8 @@ def attempt_and_evaluate(
             "status": "error", "checks": {},
             "error": "Attempt interrupted before evaluation completed.",
         }
-        _record(
-            trace, "interruption", status="interrupted",
+        _record_final(
+            trace, sink, "interruption", status="interrupted",
             error=f"{type(exc).__name__}: {exc}",
         )
     except EventRecordingError as exc:
@@ -664,18 +665,18 @@ def attempt_and_evaluate(
         result["failure_category"] = "recording_failure"
         result["functional_verdict"] = "invalid_environment"
         result["evaluation"] = {"status": "error", "checks": {}, "error": harness_error}
-        _record(trace, "harness_error", status="error", error=harness_error)
+        _record_final(trace, sink, "harness_error", status="error", error=harness_error)
     except Exception as exc:
         harness_error = f"{type(exc).__name__}: {exc}"
         result["harness_error"] = harness_error
         if time.monotonic() >= work_deadline:
             result["termination_reason"] = "attempt_deadline"
             result["failure_category"] = "environment_setup_deadline"
-            _record(trace, "termination", reason="attempt_deadline", error=harness_error)
+            _record_final(trace, sink, "termination", reason="attempt_deadline", error=harness_error)
         else:
             result["termination_reason"] = "harness_error"
             result["failure_category"] = "harness_environment_failure"
-            _record(trace, "harness_error", status="error", error=harness_error)
+            _record_final(trace, sink, "harness_error", status="error", error=harness_error)
         result["functional_verdict"] = "invalid_environment"
         result["evaluation"] = {"status": "error", "checks": {}, "error": harness_error}
     finally:
@@ -690,7 +691,7 @@ def attempt_and_evaluate(
             except Exception as exc:
                 cleanup_error = f"{type(exc).__name__}: {exc}"
                 result.setdefault("cleanup_error", cleanup_error)
-                _record(trace, "cleanup_error", status="error", error=cleanup_error)
+                _record_final(trace, sink, "cleanup_error", status="error", error=cleanup_error)
         _finalize_accounting(result, model, model_call_count, usage_records, trace)
         if repository_capture is not None:
             result["metadata"]["repository_capture"] = repository_capture.summary()
@@ -707,8 +708,8 @@ def attempt_and_evaluate(
             try:
                 result["candidate"] = collect_candidate(task_repository, defect_baseline)
                 changes = result["candidate"]["files"]
-                _record(
-                    trace, "patch_collection", status="completed_during_cleanup",
+                _record_final(
+                    trace, sink, "patch_collection", status="completed_during_cleanup",
                     changed_files=result["candidate"]["changed_files"],
                     change_count=len(changes),
                 )
@@ -724,16 +725,16 @@ def attempt_and_evaluate(
                             admitted_task=admitted_task,
                             timeout_seconds=budgets.evaluation_timeout_seconds,
                         )
-                    _finalize_evaluation(result, evaluation, trace)
+                    evaluation_category = _finalize_evaluation(result, evaluation, trace, sink)
             except EnvironmentFailure as exc:
                 evaluation = {"status": "invalid_patch", "checks": {}, "error": str(exc)}
                 result["candidate"] = {
                     "status": "unavailable", "changed_files": [], "files": [],
                     "patch": "", "collection_error": str(exc),
                 }
-                _record(trace, "patch_collection", status="unavailable",
-                        error_category="invalid_patch", error=str(exc))
-                _finalize_evaluation(result, evaluation, trace)
+                _record_final(trace, sink, "patch_collection", status="unavailable",
+                              error_category="invalid_patch", error=str(exc))
+                evaluation_category = _finalize_evaluation(result, evaluation, trace, sink)
         result["duration_seconds"] = round(time.monotonic() - started, 6)
         result["metadata"]["duration_seconds"] = result["duration_seconds"]
         result["metadata"]["finished_at"] = _timestamp()
@@ -743,7 +744,12 @@ def attempt_and_evaluate(
                     "termination_reason": result["termination_reason"],
                     "functional_verdict": result["functional_verdict"],
                     "failure_category": result.get("failure_category"),
+                    "duration_seconds": result["duration_seconds"],
+                    "candidate_status": result["candidate"].get("status"),
                     "changed_files": result["candidate"].get("changed_files", []),
+                    "evaluation_status": result["evaluation"].get("status"),
+                    "evaluation_failure_category": evaluation_category,
+                    "evaluation_error": result["evaluation"].get("error"),
                     "checks": result["evaluation"].get("checks", {}),
                 },
                 {"candidate.patch": result["candidate"].get("patch", "").encode("utf-8")},
@@ -751,5 +757,5 @@ def attempt_and_evaluate(
         except EventRecordingError as exc:
             # The result is still returned; an earlier failure keeps its own message.
             result.setdefault("recording", {"status": "failed", "error": str(exc)})
-        _collect_artifacts(result, artifact_directory)
+        _collect_artifacts(result, artifact_directory, observed=event_sink is not None)
     return result

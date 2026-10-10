@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from live_tracker.legacy import LEGACY_FORMAT
 from live_tracker.server import make_server
 
 
@@ -22,7 +23,8 @@ LEGACY_ROOT = Path(os.environ.get(
 class LegacyServerTests(unittest.TestCase):
     def setUp(self):
         self.directory = LEGACY_ROOT / "python-loop"
-        server = make_server({"legacy-python-loop": self.directory}, port=0)
+        server = make_server({"legacy-python-loop": self.directory}, port=0,
+                             formats={"legacy-python-loop": LEGACY_FORMAT})
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)

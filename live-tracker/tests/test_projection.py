@@ -12,7 +12,7 @@ from pathlib import Path
 
 from attempt_fixtures import CHECKS, PATCH, REASONING, RESPONSE, record_attempt
 from live_tracker.projection import build_result, final_results, render_report
-from live_tracker.recorder import FaultyStorage
+from live_tracker.recorder import AttemptRecorder, FaultyStorage
 
 
 class ProjectionTests(unittest.TestCase):
@@ -86,6 +86,65 @@ class ProjectionTests(unittest.TestCase):
                 pass  # the recorder refused the mandatory write, as designed
             self.assertEqual(final_results(directory)["recording"]["status"], "failed")
             self.assertIn("Recording</dt><dd>failed", render_report(directory))
+
+
+class RecordedFinalFactsTests(unittest.TestCase):
+    """The final records the harness publishes are the only source for candidate and evaluation facts."""
+
+    def _finished(self, directory: Path, finish_facts: dict) -> None:
+        recorder = AttemptRecorder(directory, attempt_id="attempt-final")
+        recorder.emit("attempt_started", {"task_id": "t1", "orchestrator": "python-loop"})
+        recorder.emit("termination", {"reason": "agent_completed", "model_calls": 1})
+        recorder.emit("patch_collection", {"status": "completed", "changed_files": ["app/source.py"],
+                                           "change_count": 1})
+        recorder.emit("evaluation", {"status": "completed", "failure_category": "acceptance_failed",
+                                     "functional_verdict": "failure", "checks": CHECKS, "error": None})
+        recorder.emit("attempt_finished", {
+            "termination_reason": "agent_completed", "functional_verdict": "failure",
+            "failure_category": "acceptance_failed", "changed_files": ["app/source.py"], "checks": CHECKS,
+            **finish_facts,
+        }, {"candidate.patch": PATCH.encode("utf-8")})
+
+    def test_recorded_candidate_and_evaluation_facts_are_projected_as_recorded(self):
+        with tempfile.TemporaryDirectory(prefix="live-projection-") as temporary:
+            directory = Path(temporary) / "attempt"
+            self._finished(directory, {"candidate_status": "collected", "evaluation_status": "completed",
+                                       "evaluation_error": None, "evaluation_failure_category": "acceptance_failed"})
+            result = build_result(directory)
+            self.assertEqual(result["candidate"]["status"], "collected")
+            self.assertEqual(result["evaluation"]["status"], "completed")
+            self.assertIsNone(result["evaluation"]["error"])
+            self.assertEqual(final_results(directory)["evaluation_status"], "completed")
+
+    def test_a_recorded_evaluation_error_is_projected_as_recorded(self):
+        with tempfile.TemporaryDirectory(prefix="live-projection-") as temporary:
+            directory = Path(temporary) / "attempt"
+            self._finished(directory, {"candidate_status": "unavailable", "evaluation_status": "invalid_patch",
+                                       "evaluation_error": "bad patch", "evaluation_failure_category": "invalid_patch"})
+            result = build_result(directory)
+            self.assertEqual(result["candidate"]["status"], "unavailable")
+            self.assertEqual(result["evaluation"]["status"], "invalid_patch")
+            self.assertEqual(result["evaluation"]["error"], "bad patch")
+
+    def test_facts_the_log_does_not_record_are_not_recorded_rather_than_invented(self):
+        with tempfile.TemporaryDirectory(prefix="live-projection-") as temporary:
+            directory = Path(temporary) / "attempt"
+            self._finished(directory, {})
+            result = build_result(directory)
+            self.assertEqual(result["candidate"]["status"], "not recorded")
+            self.assertEqual(result["evaluation"]["status"], "not recorded")
+            self.assertEqual(result["evaluation"]["error"], "not recorded")
+            self.assertEqual(final_results(directory)["evaluation_status"], "not recorded")
+
+    def test_the_projected_trace_keeps_the_recorded_final_records_in_order(self):
+        with tempfile.TemporaryDirectory(prefix="live-projection-") as temporary:
+            directory = Path(temporary) / "attempt"
+            self._finished(directory, {"candidate_status": "collected", "evaluation_status": "completed",
+                                       "evaluation_error": None})
+            trace = build_result(directory)["trace"]
+            self.assertEqual([event["type"] for event in trace], ["termination", "patch_collection", "evaluation"])
+            self.assertEqual([event["event_id"] for event in trace], [1, 2, 3])
+            self.assertEqual(trace[1]["changed_files"], ["app/source.py"])
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from agent_eval_harness.context import _json_copy, _tool_output_for_model
 from agent_eval_harness.environment import DockerTaskContainer
 from agent_eval_harness.model import ModelResponse, ToolCall
 from agent_eval_harness.observation import NULL_EVENT_SINK, AttemptEventSink
-from agent_eval_harness.persistence import _record
+from agent_eval_harness.persistence import _record, _record_final
 
 
 TOOL_DEFINITIONS: dict[str, dict[str, str]] = {
@@ -80,7 +80,6 @@ def execute_tool_turn(
 ) -> str | None:
     """Run one ordered tool node and append its bounded outputs to conversation state."""
     for index, call in enumerate(response.tool_calls, 1):
-        tool_started = time.monotonic()
         tool_id = call.call_id or f"call-{model_call_count}-{index}"
         operation_id = f"tool-{model_call_count}-{index}"
         # Before any dispatch: a failed start record must stop the tool from running.
@@ -89,6 +88,8 @@ def execute_tool_turn(
                            "arguments": _json_copy(dict(call.arguments))},
             operation_id=operation_id, parent_operation_id=f"model-{model_call_count}",
         )
+        # The budget is measured after the start record: writing it takes time the tool did not spend.
+        tool_started = time.monotonic()
         tool_remaining = work_deadline - tool_started
         default_timeout = float(budgets.shell_timeout_seconds) if call.name == "run_shell" else 30.0
         dispatched = tool_remaining > 0
@@ -160,6 +161,6 @@ def execute_tool_turn(
         })
         if deadline_hit:
             termination = "attempt_deadline"
-            _record(trace, "termination", reason=termination, model_calls=model_call_count)
+            _record_final(trace, event_sink, "termination", reason=termination, model_calls=model_call_count)
             return termination
     return None

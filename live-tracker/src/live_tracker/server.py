@@ -12,15 +12,17 @@ import time
 from typing import Any, Mapping
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from live_tracker.projection import final_results, render_report
-from live_tracker.reader import read_attempt_history
+from live_tracker.legacy import LEGACY_FORMAT
+from live_tracker.projection import REPORT_NAME, final_results, render_report
+from live_tracker.reader import AttemptReader, read_attempt_history
+from live_tracker.recorder import SCHEMA
 from live_tracker.sources import resolve_source
 
 
 WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
                 ".js": "text/javascript; charset=utf-8"}
-# ponytail: SSE re-reads the whole log each tick; an incremental byte-offset tail is the upgrade.
+# Each stream tails its own log: a poll reads only the bytes appended since the previous one.
 POLL_SECONDS = 0.2
 # Per-connection delivery limits: frames waiting for one socket, and how long a full buffer may stall.
 BUFFER_EVENTS = 256
@@ -89,6 +91,7 @@ def _sse(data: Mapping[str, Any], *, event: str = "attempt-event", event_id: str
 
 class _TrackerHandler(BaseHTTPRequestHandler):
     attempts: dict[str, Path] = {}
+    formats: dict[str, str] = {}
     buffer_events = BUFFER_EVENTS
     stall_seconds = STALL_SECONDS
 
@@ -110,17 +113,18 @@ class _TrackerHandler(BaseHTTPRequestHandler):
             directory = self.attempts.get(segments[3])
             if directory is None:
                 return self._json({"error": "unknown attempt"}, 404)
+            fmt = self.formats[segments[3]]
             action = segments[4]
             if action == "events" and len(segments) == 5:
-                return self._events(segments[3], directory, url.query)
+                return self._events(segments[3], directory, fmt, url.query)
             if action == "stream" and len(segments) == 5:
-                return self._stream(segments[3], directory, url.query)
+                return self._stream(segments[3], directory, fmt, url.query)
             if action == "final" and len(segments) == 5:
-                return self._final(directory)
+                return self._final(directory, fmt)
             if action == "report" and len(segments) == 5:
-                return self._report(directory)
+                return self._report(directory, fmt)
             if action == "artifacts" and len(segments) >= 6:
-                return self._artifact(directory, "/".join(segments[5:]))
+                return self._artifact(directory, fmt, "/".join(segments[5:]))
         self._json({"error": "not found"}, 404)
 
     def _source(self, query: str) -> None:
@@ -132,7 +136,7 @@ class _TrackerHandler(BaseHTTPRequestHandler):
 
     def _summary(self, item: tuple[str, Path]) -> dict[str, Any]:
         attempt_id, directory = item
-        history = read_attempt_history(directory)
+        history = read_attempt_history(directory, self.formats[attempt_id])
         return {
             "attempt_id": attempt_id,
             "event_count": len(history.events),
@@ -159,8 +163,8 @@ class _TrackerHandler(BaseHTTPRequestHandler):
             raise _Refused(409, f"cursor {cursor} is beyond the latest recorded sequence {latest}")
         return cursor
 
-    def _events(self, attempt_id: str, directory: Path, query: str) -> None:
-        history = read_attempt_history(directory)
+    def _events(self, attempt_id: str, directory: Path, fmt: str, query: str) -> None:
+        history = read_attempt_history(directory, fmt)
         try:
             after = self._cursor(attempt_id, query, history.events[-1]["sequence"] if history.events else 0)
         except _Refused as exc:
@@ -170,8 +174,9 @@ class _TrackerHandler(BaseHTTPRequestHandler):
             "recording": history.status(),
         })
 
-    def _stream(self, attempt_id: str, directory: Path, query: str) -> None:
-        history = read_attempt_history(directory)
+    def _stream(self, attempt_id: str, directory: Path, fmt: str, query: str) -> None:
+        reader = AttemptReader(directory, fmt)
+        history = reader.poll()
         try:
             sent = self._cursor(attempt_id, query, history.events[-1]["sequence"] if history.events else 0)
         except _Refused as exc:
@@ -188,11 +193,10 @@ class _TrackerHandler(BaseHTTPRequestHandler):
         last_status = None
         try:
             while True:
-                history = read_attempt_history(directory)
+                history = reader.poll()
                 finished = False
-                for event in history.events:
-                    if event["sequence"] <= sent:
-                        continue
+                # Sequences are contiguous from 1, so the events after the cursor are the list's tail.
+                for event in history.events[sent:]:
                     sent = event["sequence"]
                     observer.offer(_sse(event, event_id=f"{attempt_id}:{sent}"))
                     finished = event["type"] == "attempt_finished"
@@ -205,8 +209,9 @@ class _TrackerHandler(BaseHTTPRequestHandler):
                 if head != reported:
                     reported = head
                     observer.offer(_sse({"latest_sequence": head}, event="head"))
-                # A preserved legacy trace never grows: its stream ends once its events are sent.
-                if finished or history.state in {"corrupt", "failed", "legacy"}:
+                # A complete recording and a preserved legacy trace never grow: their streams end once
+                # the status frame is sent. A stream that opened at the final cursor sees no new events.
+                if finished or history.state in {"complete", "corrupt", "failed", "legacy"}:
                     break
                 if observer.gone.is_set():
                     return
@@ -222,15 +227,15 @@ class _TrackerHandler(BaseHTTPRequestHandler):
             pass
         observer.writer.join()
 
-    def _final(self, directory: Path) -> None:
+    def _final(self, directory: Path, fmt: str) -> None:
         try:
-            return self._json(final_results(directory))
+            return self._json(final_results(directory, fmt))
         except (OSError, ValueError, KeyError) as exc:
             return self._json({"error": f"final results unavailable: {exc}"}, 500)
 
-    def _report(self, directory: Path) -> None:
+    def _report(self, directory: Path, fmt: str) -> None:
         try:
-            body = render_report(directory).encode("utf-8")
+            body = render_report(directory, fmt).encode("utf-8")
         except (OSError, ValueError, KeyError) as exc:
             return self._json({"error": f"report unavailable: {exc}"}, 500)
         # The projected report holds recorded model and tool text: it may not run script or fetch anything.
@@ -239,7 +244,16 @@ class _TrackerHandler(BaseHTTPRequestHandler):
             "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
         })
 
-    def _artifact(self, directory: Path, relative: str) -> None:
+    def _artifact(self, directory: Path, fmt: str, relative: str) -> None:
+        # The projected report stands for report.html; the file on disk is never served.
+        if relative == REPORT_NAME:
+            return self._report(directory, fmt)
+        # Only files that a verified event links (its recorded artifacts) are evidence; nothing else in the directory is.
+        history = read_attempt_history(directory, fmt)
+        referenced = {artifact["path"] for event in history.events for artifact in event.get("artifacts", [])
+                      if artifact.get("integrity") == "ok"}
+        if relative not in referenced:
+            return self._json({"error": "artifact is not referenced by a verified event"}, 404)
         root = directory.resolve()
         target = (root / relative).resolve()
         if root not in target.parents:
@@ -272,15 +286,22 @@ class _TrackerHandler(BaseHTTPRequestHandler):
 
 
 def make_server(
-    attempts: Mapping[str, Path], *, host: str = "127.0.0.1", port: int = 0,
-    buffer_events: int = BUFFER_EVENTS, stall_seconds: float = STALL_SECONDS,
+    attempts: Mapping[str, Path], *, formats: Mapping[str, str] | None = None, host: str = "127.0.0.1",
+    port: int = 0, buffer_events: int = BUFFER_EVENTS, stall_seconds: float = STALL_SECONDS,
 ) -> ThreadingHTTPServer:
-    """Serve registered attempt directories on loopback only."""
+    """Serve registered attempt directories on loopback only.
+
+    An attempt is read as an event log unless it is registered with LEGACY_FORMAT; the format is never inferred.
+    """
     if host not in {"127.0.0.1", "localhost"}:
         raise ValueError("the live tracker serves loopback addresses only")
     registry = {attempt_id: Path(path).expanduser().resolve() for attempt_id, path in attempts.items()}
+    declared = dict(formats or {})
+    if set(declared) - set(registry) or set(declared.values()) - {SCHEMA, LEGACY_FORMAT}:
+        raise ValueError("formats must name registered attempts and a known format")
     handler = type("TrackerHandler", (_TrackerHandler,), {
-        "attempts": registry, "buffer_events": buffer_events, "stall_seconds": stall_seconds,
+        "attempts": registry, "formats": {attempt_id: declared.get(attempt_id, SCHEMA) for attempt_id in registry},
+        "buffer_events": buffer_events, "stall_seconds": stall_seconds,
     })
     return _Server((host, port), handler)
 
