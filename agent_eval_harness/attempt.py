@@ -9,9 +9,11 @@ from datetime import datetime, timezone
 import difflib
 import json
 from pathlib import Path, PurePosixPath
+import queue
 import shutil
 import stat
 import tempfile
+import threading
 import time
 from typing import Any, Mapping
 import uuid
@@ -32,6 +34,7 @@ from agent_eval_harness.model import (
     ModelConfig,
     ModelRequest,
     ModelResponse,
+    RetryableProviderError,
     ScriptedModel,
     ToolCall,
 )
@@ -48,11 +51,17 @@ DEFAULT_SOURCE_REPOSITORY = Path("/home/francisco/prompt-engineering-group-proje
 
 @dataclass(frozen=True)
 class AttemptBudgets:
-    """Initial small set of execution limits; later tickets can extend this contract."""
+    """Configurable calibration proposals for one attempt, not benchmark defaults."""
 
     max_model_calls: int = 30
     shell_timeout_seconds: int = 60
     tool_output_limit_bytes: int = 16 * 1024
+    attempt_deadline_seconds: float = 600
+    max_context_bytes: int = 128 * 1024
+    max_provider_retries: int = 1
+    provider_retry_delay_seconds: float = 0
+    cleanup_timeout_seconds: float = 5
+    evaluation_timeout_seconds: float = 90
 
     def __post_init__(self) -> None:
         if self.max_model_calls < 1:
@@ -61,6 +70,47 @@ class AttemptBudgets:
             raise ValueError("shell_timeout_seconds must be positive")
         if self.tool_output_limit_bytes < 128:
             raise ValueError("tool_output_limit_bytes must be at least 128")
+        if self.attempt_deadline_seconds <= 0:
+            raise ValueError("attempt_deadline_seconds must be positive")
+        if self.max_context_bytes < 1:
+            raise ValueError("max_context_bytes must be positive")
+        if self.max_provider_retries < 0:
+            raise ValueError("max_provider_retries cannot be negative")
+        if self.provider_retry_delay_seconds < 0:
+            raise ValueError("provider_retry_delay_seconds cannot be negative")
+        if self.cleanup_timeout_seconds <= 0:
+            raise ValueError("cleanup_timeout_seconds must be positive")
+        if self.evaluation_timeout_seconds <= 0:
+            raise ValueError("evaluation_timeout_seconds must be positive")
+
+
+class ModelCallDeadlineExceeded(TimeoutError):
+    """A synchronous provider request did not return before its allocated time."""
+
+
+def _complete_with_deadline(
+    model: ModelAdapter, request: ModelRequest, timeout_seconds: float
+) -> ModelResponse:
+    """Bound a synchronous provider call without making cleanup wait for it."""
+    completed: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
+
+    def invoke() -> None:
+        try:
+            completed.put((True, model.complete(request)))
+        except BaseException as exc:
+            completed.put((False, exc))
+
+    worker = threading.Thread(target=invoke, name="agent-eval-provider-call", daemon=True)
+    worker.start()
+    worker.join(timeout=max(0.0, timeout_seconds))
+    if worker.is_alive():
+        raise ModelCallDeadlineExceeded(
+            "provider request exceeded the remaining attempt deadline"
+        )
+    succeeded, value = completed.get_nowait()
+    if not succeeded:
+        raise value
+    return value
 
 
 @dataclass(frozen=True)
@@ -155,6 +205,11 @@ def _tool_output_for_model(output: str, limit: int) -> tuple[str, bool]:
     return prefix + marker, True
 
 
+def _context_size_bytes(messages: list[dict[str, Any]]) -> int:
+    serialized = json.dumps(messages, ensure_ascii=False, separators=(",", ":"), default=_json_default)
+    return len(serialized.encode("utf-8"))
+
+
 def _initial_context(task: AdmittedTask, task_repository: Path) -> list[dict[str, str]]:
     public_task = task.public_task_path.read_text(encoding="utf-8")
     instructions_path = task_repository / "AGENTS.md"
@@ -210,24 +265,43 @@ def _dispatch_tool(
     container: DockerTaskContainer,
     call: ToolCall,
     budgets: AttemptBudgets,
+    timeout_seconds: float,
 ) -> dict[str, Any]:
     args = dict(call.arguments)
     if call.name == "read_file":
         if not isinstance(args.get("path"), str):
             return {"status": "error", "output": "", "error": "path must be text", "exit_code": None}
-        return container_read_file(container, args["path"])
+        return container_read_file(container, args["path"], timeout=timeout_seconds)
     if call.name == "search_text":
         if not isinstance(args.get("query"), str):
             return {"status": "error", "output": "", "error": "query must be text", "exit_code": None}
-        return container_search_text(container, args["query"])
+        return container_search_text(container, args["query"], timeout=timeout_seconds)
     if call.name == "apply_patch":
-        return container_apply_patch(container, args)
+        return container_apply_patch(container, args, timeout=timeout_seconds)
     if call.name == "run_shell":
         command = args.get("command")
         if not isinstance(command, str):
             return {"status": "error", "output": "", "error": "command must be text", "exit_code": None}
-        return container_run_shell(container, command, budgets.shell_timeout_seconds)
+        return container_run_shell(container, command, timeout_seconds)
     return {"status": "error", "output": "", "error": f"unknown tool: {call.name}", "exit_code": None}
+
+
+def _classify_tool_result(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Give every tool result a stable, model-readable status and failure category."""
+    normalized = dict(result)
+    if normalized.get("status") == "error":
+        if "error_category" not in normalized:
+            if tool_name == "apply_patch":
+                category = "patch_rejected"
+            elif "timed out" in str(normalized.get("error", "")).casefold():
+                category = "command_timeout"
+            elif tool_name == "run_shell":
+                category = "command_failed"
+            else:
+                category = "tool_failed"
+            normalized["error_category"] = category
+        normalized.setdefault("retryable", False)
+    return normalized
 
 
 def _snapshot_repository(root: Path) -> dict[str, tuple[bytes, int]]:
@@ -319,8 +393,29 @@ def _apply_candidate_changes(repository: Path, changes: list[dict[str, Any]]) ->
         target.chmod(change.get("mode", 0o644))
 
 
+def _materialize_snapshot(
+    repository: Path, snapshot: Mapping[str, tuple[bytes, int]]
+) -> None:
+    repository.mkdir(parents=True, exist_ok=False)
+    for relative_name, (content, mode) in snapshot.items():
+        relative = _safe_candidate_path(relative_name)
+        target = repository.joinpath(*relative.parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        target.chmod(mode)
+
+
 def _collect_artifacts(result: dict[str, Any], artifact_directory: Path) -> None:
     artifact_directory.mkdir(parents=True, exist_ok=True)
+    full_output_directory = artifact_directory / "tool-results"
+    for event in result.get("trace", []):
+        if event.get("type") != "tool" or not isinstance(event.get("result"), dict):
+            continue
+        full_output_directory.mkdir(parents=True, exist_ok=True)
+        relative = f"tool-results/event-{event['event_id']:04d}.txt"
+        output = str(event["result"].get("output", ""))
+        (artifact_directory / relative).write_text(output, encoding="utf-8")
+        event["result"]["output_artifact"] = relative
     metadata = result.get("metadata", {})
     (artifact_directory / "metadata.json").write_text(
         json.dumps(metadata, indent=2, ensure_ascii=False, sort_keys=True, default=_json_default) + "\n",
@@ -382,7 +477,7 @@ def attempt_and_evaluate(
         "functional_verdict": "invalid_environment",
         "duration_seconds": 0.0,
         "trace": trace,
-        "candidate": {"changed_files": [], "files": [], "patch": ""},
+        "candidate": {"status": "unavailable", "changed_files": [], "files": [], "patch": ""},
         "evaluation": {"status": "error", "checks": {}, "error": "evaluation not run"},
         "initial_context": [],
         "metadata": {
@@ -396,6 +491,10 @@ def attempt_and_evaluate(
             "model_settings": _json_copy(dict(model_config.settings)),
             "orchestrator": orchestrator,
             "budgets": _json_copy(budgets.__dict__),
+            "budget_calibration_status": "configurable_proposal",
+            "budget_calibration_note": (
+                "Numeric values are configurable proposals; calibrate before benchmark comparisons."
+            ),
             "started_at": _timestamp(),
             "admission_evidence": str(admitted_task.admission_evidence_path),
             "task_container_image": admitted_task.image,
@@ -408,6 +507,8 @@ def attempt_and_evaluate(
         },
     }
     started = time.monotonic()
+    attempt_deadline = started + budgets.attempt_deadline_seconds
+    work_deadline = attempt_deadline - budgets.cleanup_timeout_seconds
     defect_baseline: dict[str, tuple[bytes, int]] = {}
     attempt_container: DockerTaskContainer | None = None
     model_call_count = 0
@@ -420,6 +521,7 @@ def attempt_and_evaluate(
             admitted_task.dockerfile_path.parent,
             expected_base_image=admitted_task.expected_base_image,
             expected_python_version=admitted_task.runtime_version,
+            deadline=work_deadline,
         )
         image_evidence["admission_image_id"] = result["metadata"]["admission_recorded_image_id"]
         result["metadata"]["task_image_evidence"] = image_evidence
@@ -430,11 +532,14 @@ def attempt_and_evaluate(
                 admitted_task.source_revision,
                 admitted_task.defect_mutation_path,
                 defect_repository,
+                deadline=work_deadline,
             )
             defect_baseline = _snapshot_repository(defect_repository)
             shutil.copytree(defect_repository, task_repository)
             attempt_container = DockerTaskContainer(image_evidence["image_id"], task_repository)
-            attempt_container.start()
+            attempt_container.start(
+                timeout_seconds=budgets.attempt_deadline_seconds, deadline=work_deadline
+            )
             result["attempt_container_configuration"] = attempt_container.configuration
             result["metadata"]["attempt_repository"] = str(task_repository)
 
@@ -451,29 +556,146 @@ def attempt_and_evaluate(
 
             termination = "harness_error"
             while True:
+                if time.monotonic() >= work_deadline:
+                    termination = "attempt_deadline"
+                    _record(
+                        trace, "termination", reason=termination,
+                        attempt_deadline_seconds=budgets.attempt_deadline_seconds,
+                    )
+                    break
                 if model_call_count >= budgets.max_model_calls:
                     termination = "model_call_budget"
                     _record(trace, "termination", reason=termination, model_calls=model_call_count)
                     break
-                request = ModelRequest(messages=copy.deepcopy(messages), config=model_config)
-                model_call_count += 1
-                call_started = time.monotonic()
-                try:
-                    response = model.complete(request)
-                    if not isinstance(response, ModelResponse):
-                        raise TypeError("model adapter must return ModelResponse")
-                except Exception as exc:
-                    duration = time.monotonic() - call_started
+                context_bytes = _context_size_bytes(messages)
+                result["metadata"]["context_bytes_at_last_check"] = context_bytes
+                if context_bytes > budgets.max_context_bytes:
+                    termination = "context_budget"
+                    result["metadata"]["context_bytes_at_stop"] = context_bytes
                     _record(
-                        trace,
-                        "model",
-                        model_call=model_call_count,
-                        status="error",
-                        duration_seconds=round(duration, 6),
-                        request_messages=request.messages,
-                        error=f"{type(exc).__name__}: {exc}",
+                        trace, "termination", reason=termination,
+                        context_bytes=context_bytes, max_context_bytes=budgets.max_context_bytes,
                     )
-                    termination = "provider_error"
+                    break
+                request_retry_count = 0
+                response: ModelResponse | None = None
+                while response is None:
+                    if time.monotonic() >= work_deadline:
+                        termination = "attempt_deadline"
+                        _record(trace, "termination", reason=termination, model_calls=model_call_count)
+                        break
+                    if model_call_count >= budgets.max_model_calls:
+                        termination = "model_call_budget"
+                        _record(trace, "termination", reason=termination, model_calls=model_call_count)
+                        break
+                    request = ModelRequest(
+                        messages=copy.deepcopy(messages),
+                        config=model_config,
+                        timeout_seconds=work_deadline - time.monotonic(),
+                    )
+                    model_call_count += 1
+                    call_started = time.monotonic()
+                    try:
+                        response = _complete_with_deadline(
+                            model, request, work_deadline - call_started
+                        )
+                        if not isinstance(response, ModelResponse):
+                            raise TypeError("model adapter must return ModelResponse")
+                    except ModelCallDeadlineExceeded as exc:
+                        duration = time.monotonic() - call_started
+                        _record(
+                            trace,
+                            "model",
+                            model_call=model_call_count,
+                            status="timeout",
+                            duration_seconds=round(duration, 6),
+                            request_messages=request.messages,
+                            error=f"{type(exc).__name__}: {exc}",
+                            error_category="attempt_deadline",
+                        )
+                        termination = "attempt_deadline"
+                        _record(trace, "termination", reason=termination, model_calls=model_call_count)
+                        break
+                    except KeyboardInterrupt as exc:
+                        duration = time.monotonic() - call_started
+                        _record(
+                            trace,
+                            "model",
+                            model_call=model_call_count,
+                            status="interrupted",
+                            duration_seconds=round(duration, 6),
+                            request_messages=request.messages,
+                            error=f"{type(exc).__name__}: {exc}",
+                            error_category="interrupted",
+                        )
+                        termination = "interrupted"
+                        _record(trace, "termination", reason=termination, model_calls=model_call_count)
+                        break
+                    except RetryableProviderError as exc:
+                        duration = time.monotonic() - call_started
+                        can_retry = (
+                            request_retry_count < budgets.max_provider_retries
+                            and model_call_count < budgets.max_model_calls
+                            and time.monotonic() < work_deadline
+                        )
+                        delay = min(
+                            budgets.provider_retry_delay_seconds,
+                            max(0.0, work_deadline - time.monotonic()),
+                        ) if can_retry else 0.0
+                        _record(
+                            trace,
+                            "model",
+                            model_call=model_call_count,
+                            status="error",
+                            duration_seconds=round(duration, 6),
+                            request_messages=request.messages,
+                            error=f"{type(exc).__name__}: {exc}",
+                            error_category="retryable_provider_error",
+                            retrying=can_retry,
+                            retry_number=request_retry_count + 1,
+                            retry_delay_seconds=delay,
+                        )
+                        if not can_retry:
+                            termination = (
+                                "model_call_budget"
+                                if model_call_count >= budgets.max_model_calls
+                                else "provider_error"
+                            )
+                            _record(
+                                trace, "termination", reason=termination,
+                                model_calls=model_call_count,
+                            )
+                            break
+                        request_retry_count += 1
+                        result["metadata"]["retry_count"] = (
+                            result["metadata"].get("retry_count", 0) + 1
+                        )
+                        if delay:
+                            time.sleep(delay)
+                        if time.monotonic() >= work_deadline:
+                            termination = "attempt_deadline"
+                            _record(
+                                trace, "termination", reason=termination,
+                                model_calls=model_call_count,
+                            )
+                            break
+                    except Exception as exc:
+                        duration = time.monotonic() - call_started
+                        _record(
+                            trace,
+                            "model",
+                            model_call=model_call_count,
+                            status="error",
+                            duration_seconds=round(duration, 6),
+                            request_messages=request.messages,
+                            error=f"{type(exc).__name__}: {exc}",
+                            error_category="provider_error",
+                            retrying=False,
+                        )
+                        termination = "provider_error"
+                        _record(trace, "termination", reason=termination, model_calls=model_call_count)
+                        break
+                if response is None:
                     break
                 duration = time.monotonic() - call_started
                 usage = _json_copy(dict(response.usage))
@@ -505,13 +727,41 @@ def attempt_and_evaluate(
                 for index, call in enumerate(response.tool_calls, 1):
                     tool_started = time.monotonic()
                     tool_id = call.call_id or f"call-{model_call_count}-{index}"
-                    try:
-                        tool_result = _dispatch_tool(attempt_container, call, budgets)
-                    except Exception as exc:
+                    tool_remaining = work_deadline - tool_started
+                    default_timeout = (
+                        float(budgets.shell_timeout_seconds)
+                        if call.name == "run_shell" else 30.0
+                    )
+                    if tool_remaining <= 0:
                         tool_result = {
                             "status": "error", "output": "",
-                            "error": f"{type(exc).__name__}: {exc}", "exit_code": None,
+                            "error": "Attempt deadline reached before tool execution",
+                            "exit_code": None, "error_category": "attempt_deadline",
+                            "retryable": False,
                         }
+                    else:
+                        effective_timeout = min(default_timeout, tool_remaining)
+                        try:
+                            tool_result = _classify_tool_result(
+                                call.name,
+                                _dispatch_tool(
+                                    attempt_container, call, budgets, effective_timeout
+                                ),
+                            )
+                        except Exception as exc:
+                            tool_result = {
+                                "status": "error", "output": "",
+                                "error": f"{type(exc).__name__}: {exc}", "exit_code": None,
+                                "error_category": "tool_failed", "retryable": False,
+                            }
+                        if (
+                            time.monotonic() >= work_deadline
+                            and tool_result.get("status") == "error"
+                            and tool_result.get("error_category") == "command_timeout"
+                        ):
+                            tool_result["error_category"] = "attempt_deadline"
+                            tool_result["error"] = "Attempt deadline expired during tool execution"
+                    deadline_hit = time.monotonic() >= work_deadline
                     duration = time.monotonic() - tool_started
                     tool_result["duration_seconds"] = round(duration, 6)
                     visible_output, truncated = _tool_output_for_model(
@@ -521,6 +771,8 @@ def attempt_and_evaluate(
                         "status": tool_result.get("status"),
                         "output": visible_output,
                         "error": tool_result.get("error"),
+                        "error_category": tool_result.get("error_category"),
+                        "retryable": tool_result.get("retryable", False),
                         "truncated": truncated,
                     }
                     _record(
@@ -540,71 +792,223 @@ def attempt_and_evaluate(
                         "name": call.name,
                         "content": json.dumps(visible, ensure_ascii=False, sort_keys=True),
                     })
+                    if deadline_hit:
+                        termination = "attempt_deadline"
+                        _record(
+                            trace, "termination", reason=termination,
+                            model_calls=model_call_count,
+                        )
+                        break
+
+                if termination == "attempt_deadline":
+                    break
 
             result["termination_reason"] = termination
             result["metadata"]["model_call_count"] = model_call_count
             result["metadata"]["usage_by_call"] = usage_records
+            result["metadata"].setdefault("retry_count", 0)
             result["attempt_container_configuration"] = attempt_container.configuration
-            attempt_container.close()
+            cleanup_timeout = min(
+                budgets.cleanup_timeout_seconds,
+                max(0.01, attempt_deadline - time.monotonic()),
+            )
+            attempt_container.close(timeout_seconds=cleanup_timeout)
             attempt_container = None
-
-            current = _snapshot_repository(task_repository)
-            changes = _candidate_changes(defect_baseline, current)
-            patch_text = _candidate_diff(changes, defect_baseline)
-            result["candidate"] = {
-                "changed_files": [change["path"] for change in changes],
-                "files": changes,
-                "patch": patch_text,
-            }
-            _record(
-                trace,
-                "patch_collection",
-                status="completed",
-                changed_files=result["candidate"]["changed_files"],
-                change_count=len(changes),
+            result["metadata"]["attempt_duration_seconds"] = round(
+                time.monotonic() - started, 6
             )
 
-            with tempfile.TemporaryDirectory(prefix="agent-eval-fresh-evaluator-") as evaluator_scratch:
-                evaluation_repository = Path(evaluator_scratch) / "task-repository"
-                shutil.copytree(defect_repository, evaluation_repository)
-                _apply_candidate_changes(evaluation_repository, changes)
-                evaluation = run_canonical_checks(
-                    image_evidence["image_id"],
-                    evaluation_repository,
-                    admitted_task.evaluator_directory,
-                    admitted_task.runtime_version,
+            try:
+                current = _snapshot_repository(task_repository)
+                changes = _candidate_changes(defect_baseline, current)
+                patch_text = _candidate_diff(changes, defect_baseline)
+                result["candidate"] = {
+                    "status": "collected",
+                    "changed_files": [change["path"] for change in changes],
+                    "files": changes,
+                    "patch": patch_text,
+                }
+            except EnvironmentFailure as exc:
+                changes = []
+                result["candidate"] = {
+                    "status": "unavailable",
+                    "changed_files": [],
+                    "files": [],
+                    "patch": "",
+                    "collection_error": str(exc),
+                }
+                _record(
+                    trace, "patch_collection", status="unavailable",
+                    error_category="invalid_patch", error=str(exc),
                 )
-            result["evaluation"] = evaluation
-            if evaluation.get("status") != "completed":
-                result["functional_verdict"] = "invalid_environment"
-            elif evaluation.get("checks") and all(value is True for value in evaluation["checks"].values()):
-                result["functional_verdict"] = "success"
-            else:
+                result["evaluation"] = {
+                    "status": "invalid_patch", "checks": {}, "error": str(exc)
+                }
+                result["failure_category"] = "invalid_patch"
                 result["functional_verdict"] = "failure"
-            _record(
-                trace,
-                "evaluation",
-                status=evaluation.get("status"),
-                functional_verdict=result["functional_verdict"],
-                checks=evaluation.get("checks", {}),
-                error=evaluation.get("error"),
-                container_configuration=evaluation.get("container_configuration", {}),
-            )
+            else:
+                _record(
+                    trace,
+                    "patch_collection",
+                    status="completed",
+                    changed_files=result["candidate"]["changed_files"],
+                    change_count=len(changes),
+                )
+
+            if result["candidate"]["status"] == "collected":
+                try:
+                    with tempfile.TemporaryDirectory(prefix="agent-eval-fresh-evaluator-") as evaluator_scratch:
+                        evaluation_repository = Path(evaluator_scratch) / "task-repository"
+                        shutil.copytree(defect_repository, evaluation_repository)
+                        _apply_candidate_changes(evaluation_repository, changes)
+                        evaluation = run_canonical_checks(
+                            image_evidence["image_id"],
+                            evaluation_repository,
+                            admitted_task.evaluator_directory,
+                            admitted_task.runtime_version,
+                            timeout_seconds=budgets.evaluation_timeout_seconds,
+                        )
+                except EnvironmentFailure as exc:
+                    evaluation = {
+                        "status": "invalid_patch", "checks": {}, "error": str(exc)
+                    }
+                    result["failure_category"] = "invalid_patch"
+                    result["functional_verdict"] = "failure"
+                result["evaluation"] = evaluation
+                if evaluation.get("status") == "invalid_patch":
+                    result["failure_category"] = "invalid_patch"
+                    result["functional_verdict"] = "failure"
+                elif evaluation.get("status") != "completed":
+                    result["failure_category"] = "evaluation_environment_error"
+                    result["functional_verdict"] = "invalid_environment"
+                elif evaluation.get("checks") and all(value is True for value in evaluation["checks"].values()):
+                    result["failure_category"] = None
+                    result["functional_verdict"] = "success"
+                else:
+                    result["failure_category"] = "canonical_check_failure"
+                    result["functional_verdict"] = "failure"
+                _record(
+                    trace,
+                    "evaluation",
+                    status=evaluation.get("status"),
+                    failure_category=result.get("failure_category"),
+                    functional_verdict=result["functional_verdict"],
+                    checks=evaluation.get("checks", {}),
+                    error=evaluation.get("error"),
+                    container_configuration=evaluation.get("container_configuration", {}),
+                )
+    except KeyboardInterrupt as exc:
+        result["termination_reason"] = "interrupted"
+        result["functional_verdict"] = "invalid_environment"
+        result["failure_category"] = "interrupted_before_evaluation"
+        result["evaluation"] = {
+            "status": "error", "checks": {},
+            "error": "Attempt interrupted before evaluation completed.",
+        }
+        _record(
+            trace, "interruption", status="interrupted",
+            error=f"{type(exc).__name__}: {exc}",
+        )
     except Exception as exc:
         harness_error = f"{type(exc).__name__}: {exc}"
         result["harness_error"] = harness_error
-        result["termination_reason"] = "harness_error"
+        if time.monotonic() >= work_deadline:
+            result["termination_reason"] = "attempt_deadline"
+            result["failure_category"] = "environment_setup_deadline"
+            _record(trace, "termination", reason="attempt_deadline", error=harness_error)
+        else:
+            result["termination_reason"] = "harness_error"
+            result["failure_category"] = "harness_environment_failure"
+            _record(trace, "harness_error", status="error", error=harness_error)
         result["functional_verdict"] = "invalid_environment"
         result["evaluation"] = {"status": "error", "checks": {}, "error": harness_error}
-        _record(trace, "harness_error", status="error", error=harness_error)
     finally:
         if attempt_container is not None:
             try:
-                attempt_container.close()
+                remaining = attempt_deadline - time.monotonic()
+                attempt_container.close(
+                    timeout_seconds=max(
+                        0.001, min(budgets.cleanup_timeout_seconds, remaining)
+                    )
+                )
             except Exception as exc:
                 cleanup_error = f"{type(exc).__name__}: {exc}"
                 result.setdefault("cleanup_error", cleanup_error)
                 _record(trace, "cleanup_error", status="error", error=cleanup_error)
+        result["metadata"]["model_call_count"] = model_call_count
+        result["metadata"]["retry_count"] = result["metadata"].get("retry_count", 0)
+        result["metadata"].setdefault("usage_by_call", usage_records)
+        result["metadata"].setdefault(
+            "attempt_duration_seconds", round(time.monotonic() - started, 6)
+        )
+        candidate = result.get("candidate", {})
+        if (
+            candidate.get("status") == "unavailable"
+            and not candidate.get("collection_error")
+            and task_repository.is_dir()
+            and defect_baseline
+        ):
+            try:
+                current = _snapshot_repository(task_repository)
+                changes = _candidate_changes(defect_baseline, current)
+                result["candidate"] = {
+                    "status": "collected",
+                    "changed_files": [change["path"] for change in changes],
+                    "files": changes,
+                    "patch": _candidate_diff(changes, defect_baseline),
+                }
+                _record(
+                    trace, "patch_collection", status="completed_during_cleanup",
+                    changed_files=result["candidate"]["changed_files"],
+                    change_count=len(changes),
+                )
+                image_evidence = result["metadata"].get("task_image_evidence")
+                if image_evidence:
+                    with tempfile.TemporaryDirectory(prefix="agent-eval-recovered-evaluator-") as scratch:
+                        defective = Path(scratch) / "defect-repository"
+                        evaluation_repository = Path(scratch) / "evaluation-repository"
+                        _materialize_snapshot(defective, defect_baseline)
+                        shutil.copytree(defective, evaluation_repository)
+                        _apply_candidate_changes(evaluation_repository, changes)
+                        evaluation = run_canonical_checks(
+                            image_evidence["image_id"], evaluation_repository,
+                            admitted_task.evaluator_directory,
+                            admitted_task.runtime_version,
+                            timeout_seconds=budgets.evaluation_timeout_seconds,
+                        )
+                    result["evaluation"] = evaluation
+                    if evaluation.get("status") != "completed":
+                        result["functional_verdict"] = "invalid_environment"
+                        result["failure_category"] = "evaluation_environment_error"
+                    elif evaluation.get("checks") and all(
+                        value is True for value in evaluation["checks"].values()
+                    ):
+                        result["functional_verdict"] = "success"
+                        result["failure_category"] = None
+                    else:
+                        result["functional_verdict"] = "failure"
+                        result["failure_category"] = "canonical_check_failure"
+                    _record(
+                        trace, "evaluation", status=evaluation.get("status"),
+                        functional_verdict=result["functional_verdict"],
+                        failure_category=result.get("failure_category"),
+                        checks=evaluation.get("checks", {}),
+                        error=evaluation.get("error"),
+                    )
+            except EnvironmentFailure as exc:
+                result["candidate"] = {
+                    "status": "unavailable", "changed_files": [], "files": [],
+                    "patch": "", "collection_error": str(exc),
+                }
+                result["evaluation"] = {
+                    "status": "invalid_patch", "checks": {}, "error": str(exc)
+                }
+                result["functional_verdict"] = "failure"
+                result["failure_category"] = "invalid_patch"
+                _record(
+                    trace, "patch_collection", status="unavailable",
+                    error_category="invalid_patch", error=str(exc),
+                )
         result["duration_seconds"] = round(time.monotonic() - started, 6)
         result["metadata"]["duration_seconds"] = result["duration_seconds"]
         result["metadata"]["finished_at"] = _timestamp()
