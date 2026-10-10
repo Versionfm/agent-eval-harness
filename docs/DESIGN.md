@@ -1,6 +1,6 @@
 # Coding-agent harness and evaluation design
 
-Status: proposed implementation design, awaiting final shared-understanding confirmation. Interview decisions are recorded in [design-interview.md](design-interview.md).
+Status: active implementation design. Ticket #2 admitted the first ML Tutor task on 2026-10-10; remaining slices retain their learning checkpoints. Interview decisions are recorded in [design-interview.md](design-interview.md).
 
 ## Purpose and first milestone
 
@@ -10,7 +10,7 @@ The first milestone exercises the complete path on one meaningful retrieval repa
 
 Read-only source inspection pinned candidate revision `6890d9eae6ebd2967553eaf5a0c5753c26322182`. The proposed task is a lost-title-evidence regression in `app/source.py::retrieve`, checked both at retrieval output and at `app/tutor.py::answer` context construction. The public symptom is that a section relevant by title is skipped even though unrelated sections are returned. Curator-only defect and known-repair details stay outside the task container.
 
-Independent synthetic cases cover title-only relevance, reordered irrelevant sections, body relevance, case normalization, top-k limits, source input immutability, and full-context bypass. Retain existing history/mode behavior checks. Do not add unrelated empty-corpus behavior to this task. Baseline/defect/repair runs are still unverified; the candidate becomes an admitted task only after those checks pass.
+Independent synthetic cases cover title-only relevance, reordered irrelevant sections, body relevance, case normalization, top-k limits, source input immutability, and full-context bypass. Retain existing history/mode behavior checks. Do not add unrelated empty-corpus behavior to this task. Ticket #2 admitted the task: the pinned baseline and known repair passed all nine checks, while the introduced title-text defect failed title retrieval, tutor-context construction, and input-order independence. Detailed machine-readable and HTML evidence is generated outside the repository by the admission command.
 
 ## Components and ownership
 
@@ -29,7 +29,7 @@ Shared interfaces remain small: a model response contains content, available rea
 
 The task container has full read/write access to its repository, prepared dependencies, and no network. It receives neither model credentials nor evaluator checks. Shell commands start at the repository root. The outer harness handles model requests and owns traces. No host filesystem or container-engine socket is mounted into the task container.
 
-Read-only host inspection found Docker 29.1.3 on Linux x86_64 via approved host execution. Ordinary sandbox execution lacks Docker socket permission. Container/image build access and isolation remain to be verified during implementation.
+Docker 29.1.3 and the digest-pinned Python 3.12.13 image were verified during ticket #2. The environment built with Docker networking disabled; separate baseline, defect, and repair containers ran with networking disabled, read-only task/evaluator mounts, and no mounted credentials or container socket. Each variant produced canonical check evidence. The run does not represent a coding-agent attempt or a live-model call.
 
 ## Comparable orchestration
 

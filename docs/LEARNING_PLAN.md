@@ -1,10 +1,10 @@
 # Learning and implementation sequence
 
-Status: proposed; await final design confirmation. Each slice includes a short explanation, an experiment the user can run, and an inspection checkpoint before expansion.
+Status: active. Slice 1 is complete and admitted; inspect its task manifest, three-run evidence, and HTML summary before moving to slice 2. Each slice includes a short explanation, an experiment the user can run, and an inspection checkpoint before expansion.
 
 | Slice | Build and observe | Completion evidence |
 | --- | --- | --- |
-| 1. Task and independent checks | Read a small retrieval call chain, pin ML Tutor, create one defect and evaluator-owned checks. | Baseline passes; defect fails; known repair passes. |
+| 1. Task and independent checks | Read the retrieval call chain, pin ML Tutor, create one defect and evaluator-owned checks. | **Complete:** baseline and repair pass all nine checks; defect fails title retrieval, tutor context, and input-order independence in Docker. |
 | 2. Tools and trace | Run repository tools in a disposable container and capture successful, failed, and truncated results. | Commands begin in the repo; outputs/errors are traceable; evaluator files and credentials are absent. |
 | 3. Explicit Python loop | Follow model → tool → model transitions with scripted responses, then a small DeepSeek smoke call. | Understand state, dispatch, stopping, retries, and provider reasoning preservation. |
 | 4. Independent verdict and report | Evaluate a proposed patch in a fresh environment and inspect clean HTML. | Both a correct patch and incorrect patch receive meaningful results; partial attempts remain inspectable. |

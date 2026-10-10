@@ -1,0 +1,42 @@
+{
+  "schema_version": "1",
+  "task_id": "ml-tutor-title-relevance",
+  "task_version": "1.0.0",
+  "acceptance_check_version": "1.0.0",
+  "acceptance_check_ids": [
+    "title_retrieval",
+    "title_context",
+    "body_relevance",
+    "case_normalization",
+    "top_k_limit",
+    "input_immutable",
+    "full_context_bypass",
+    "history_mode",
+    "input_order_independence"
+  ],
+  "source": {
+    "repository": "https://github.com/Versionfm/prompt-engineering-group-project.git",
+    "revision": "6890d9eae6ebd2967553eaf5a0c5753c26322182",
+    "paths": [
+      "app/__init__.py",
+      "app/source.py",
+      "app/tutor.py"
+    ]
+  },
+  "environment": {
+    "runtime": "Python 3.12.13",
+    "image": "python:3.12-slim@sha256:d764629ce0ddd8c71fd371e9901efb324a95789d2315a47db7e4d27e78f1b0e9",
+    "third_party_dependencies": [],
+    "dependency_basis": "The selected source and injected fake-chat path use only the Python standard library.",
+    "network": "disabled",
+    "task_mount": "read-only",
+    "evaluator_mount": "read-only"
+  },
+  "files": {
+    "public_task": "public/task.md",
+    "acceptance_checks": "curator/checks.py",
+    "defect_mutation": "curator/defect.json",
+    "known_repair": "curator/repair.json",
+    "dockerfile": "environment/Dockerfile"
+  }
+}

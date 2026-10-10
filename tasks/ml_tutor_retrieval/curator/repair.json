@@ -1,0 +1,5 @@
+{
+  "path": "app/source.py",
+  "before": "docs = [_terms(s[\"text\"]) for s in sections]",
+  "after": "docs = [_terms(s[\"title\"] + \" \" + s[\"text\"]) for s in sections]"
+}
