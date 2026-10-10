@@ -2,23 +2,42 @@
 
 The coordinator for ticket #8 is `python -m agent_eval_harness.run_matched_comparison`. It validates the admitted task and scripted parity evidence, runs a bounded DeepSeek tool-call smoke check, then starts one Python-loop attempt and one LangGraph attempt with the same task, provider settings, context policy, and per-attempt budgets. Each call to `attempt_and_evaluate` builds a fresh defective task copy and performs canonical evaluation in a separate fresh evaluator environment.
 
-The runnable path is implemented and covered with a controlled provider transport. Those deterministic runs are labeled `execution_mode: controlled_transport` in the run plan, experiment record, and attempt metadata; their HTML report says that no live inference occurred. A controlled pair is useful for verifying the coordinator and is not live ticket acceptance. The live comparison remains pending because a private DeepSeek credential-file path has not been provided. No paid calls or live outcomes are recorded here. The first milestone also needs the separate Codex review after the saved attempts exist. A model failure is not required for the milestone: a valid live pair may contain one or two failed repairs as long as both attempts, independent evaluations, and the report complete.
+The first live HTTPS pair completed on 10 October 2026 at harness revision `5be6a3f7a5627ea3df9085e46a5d94e379df7ec2`, after fresh admission and all three scripted parity scenarios passed. Direct DeepSeek `deepseek-flash` smoke passed tool call and continuation. Both attempts and independent evaluations completed with matched effective settings, and root visually inspected the comparison and recorded reviews bound to the exact saved attempts.
+
+| Implementation | Canonical checks | Calls | Stop | Estimated USD |
+|---|---:|---:|---|---:|
+| Python loop | 9/9 | 8 | provider_output_limit | 0.008226948 |
+| LangGraph | 6/9 | 10 | model_call_budget | 0.004686546 |
+
+The Python run saved a one-line title-tokenization repair. Its visible unit suite passed 28 tests, but a harder competing-body example remained unresolved before its last response exhausted the 2,048-token output limit. LangGraph explored scoring variants inside shell commands without saving a patch; title retrieval, title context and input-order independence failed. The entire measurement path worked, so the first milestone is achieved despite one failed repair. These outcomes do not establish reliable rankings or fully calibrated budgets.
+
+The total usage-based estimate including smoke was USD 0.01306953. Provider-confirmed charges were unavailable. The sequential LangGraph run received a warm prefix cache on its first call; the cost difference is not a controlled orchestration effect. Original artifacts remain unchanged, including the coordinator-time `pending_human_review` flag in `experiment.json`; a separate `acceptance-review.json` records the subsequent Codex review. Human PR review is a separate step.
+
+Local deliverables are at `/home/francisco/Documents/Codex/2026-10-10/d/outputs/evidence/live-first-2026-10-10/`: `report.html`, `review-summary.md`, `acceptance-review.json`, manifests, full traces/tool outputs, candidate patches, checks and exact-attempt review records. They remain outside Git because they include target-repository source excerpts. The original source checkout was not edited. Controlled provider-transport fixtures remain distinct from this live pair.
 
 ## Reproduce the comparison
 
-Use the persistent Python environment that has the pinned LangGraph dependency set. The repository and evidence paths below are the current local paths. The only value to substitute is the absolute path of a private text file containing the API key; keep that file outside the harness and task repositories.
+Use the persistent Python environment that has the pinned LangGraph dependency set. The repository and evidence paths below are the current local paths. The private key is stored at the path shown below, outside the harness and task repositories. Fresh prerequisites are generated for the current harness revision; prior admission/parity files remain evidence of their original revision.
 
 ```bash
 cd /home/francisco/Documents/Codex/2026-10-10/d/outputs/agent-eval-harness
 
 PYTHON=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/runtime/bin/python
-ADMISSION=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/issue-2/admission.json
-PARITY=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/issue-6/langgraph-parity/comparison.json
 SOURCE=/home/francisco/prompt-engineering-group-project
-OUTPUT=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/issue-8/matched-comparison
+RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
+EVIDENCE=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/reproduction-$RUN_TAG
+ADMISSION=$EVIDENCE/admission/admission.json
+PARITY=$EVIDENCE/parity/comparison.json
+OUTPUT=$EVIDENCE/matched
+
+"$PYTHON" -m agent_eval_harness.admit \
+  --source-repository "$SOURCE" --output-dir "$EVIDENCE/admission"
+"$PYTHON" -m agent_eval_harness.run_langgraph_parity \
+  --admission-evidence "$ADMISSION" --source-repository "$SOURCE" \
+  --output-dir "$EVIDENCE/parity"
 
 "$PYTHON" -m agent_eval_harness.run_matched_comparison \
-  --credential-file /absolute/path/to/private/deepseek-api-key.txt \
+  --credential-file /home/francisco/.config/agent-eval-harness/deepseek-api-key.txt \
   --admission-evidence "$ADMISSION" \
   --parity-evidence "$PARITY" \
   --source-repository "$SOURCE" \
@@ -86,4 +105,6 @@ After a valid pair exists, read `experiment.json` first. Then compare each `meta
 
 Complete the qualitative review only from these actual artifacts. Until then, leave both reports in the pending state. If review records are later prepared for these attempts, regenerate the report with `agent_eval_harness.compare_report --python-review ... --langgraph-review ...`; review records must identify the exact attempt and source revision.
 
-The next one-variable harness experiment should change only `max_context_bytes` from 128 KiB to 64 KiB while keeping the task, model, prompts, tools, other budgets, orchestrators, and evaluator fixed. It should reuse `attempt_and_evaluate`, its existing attempt artifacts, and the same independent evaluation boundary. Run enough paired repetitions to distinguish a context-limit effect from one stochastic response; do not treat a single follow-up pair as a ranking.
+No additional paid run was performed after this first pair. The next agreed one-variable harness experiment should change only `max_context_bytes` from 128 KiB to 64 KiB while keeping the task, model, prompts, tools, other budgets, orchestrators, and evaluator fixed. It should reuse `attempt_and_evaluate`, its existing attempt artifacts, and the same independent evaluation boundary. Run enough paired repetitions to distinguish a context-limit effect from one stochastic response; do not treat a single follow-up pair as a ranking.
+
+The output-limit stop also suggests a separate experiment varying only the output-token ceiling. Keep it separate from the context-ceiling experiment so the effect remains interpretable.

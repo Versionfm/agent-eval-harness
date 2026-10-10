@@ -1,6 +1,6 @@
 # Agent Eval Harness
 
-This repository is a learning project for coding-agent harness engineering and independent evaluation. The implemented slices admit a reproducible ML Tutor retrieval task and run a complete scripted repair through a disposable coding-agent environment and independent evaluator.
+This repository is a learning project for coding-agent harness engineering and independent evaluation. The harness admits a reproducible ML Tutor retrieval task and runs coding-agent repairs through disposable environments and independent evaluation. Both explicit Python and LangGraph implementations have completed a matched live DeepSeek pair; see the [live findings and reproduction guide](docs/MATCHED_RUN.md).
 
 The task pins `Versionfm/prompt-engineering-group-project` at `6890d9eae6ebd2967553eaf5a0c5753c26322182`. Its public description is separate from the curator-owned defect, known repair, and canonical checks. The checks use synthetic sections and an injected fake tutor response.
 
