@@ -34,11 +34,16 @@ class ModelResponse:
 class ModelRequest:
     messages: list[dict[str, Any]]
     config: ModelConfig
+    timeout_seconds: float | None = None
 
 
 class ModelAdapter(Protocol):
     def complete(self, request: ModelRequest) -> ModelResponse:
         """Return one provider response without dropping provider-specific fields."""
+
+
+class RetryableProviderError(RuntimeError):
+    """Provider transport failure that may succeed when the same request is retried."""
 
 
 class ScriptedModel:

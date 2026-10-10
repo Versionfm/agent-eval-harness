@@ -30,10 +30,18 @@ def render_attempt_report(result: dict[str, Any]) -> str:
         headline = html.escape(title)
         status = html.escape(str(event.get("status", "recorded")))
         duration = html.escape(str(event.get("duration_seconds", "unavailable")))
+        truncation = ""
+        visible_result = event.get("model_visible_result", {})
+        if visible_result.get("truncated"):
+            output_artifact = event.get("result", {}).get("output_artifact", "unavailable")
+            truncation = (
+                "<p class=\"unknown\">Model-visible output was truncated; full output artifact: "
+                f"{html.escape(str(output_artifact))}</p>"
+            )
         event_cards.append(
             "<details class=\"event\"><summary>"
             f"<strong>{headline}</strong> <span>{status}</span> <small>{duration}s</small>"
-            "</summary><pre>" + html.escape(_pretty(event)) + "</pre></details>"
+            "</summary>" + truncation + "<pre>" + html.escape(_pretty(event)) + "</pre></details>"
         )
 
     evaluation = result.get("evaluation", {})
@@ -63,7 +71,15 @@ def render_attempt_report(result: dict[str, Any]) -> str:
         "Orchestrator": metadata.get("orchestrator", "unavailable"),
         "Termination": termination,
         "Functional verdict": verdict,
+        "Failure category": result.get("failure_category", "none"),
         "Duration": f"{result.get('duration_seconds', 'unavailable')} seconds",
+        "Attempt duration": f"{metadata.get('attempt_duration_seconds', 'unavailable')} seconds",
+        "Model requests / retries": (
+            f"{metadata.get('model_call_count', 'unavailable')} / "
+            f"{metadata.get('retry_count', 'unavailable')}"
+        ),
+        "Candidate artifacts": result.get("candidate", {}).get("status", "unavailable"),
+        "Token usage": "Unavailable unless reported by the provider",
         "Cost": "Cost unavailable",
         "Qualitative review": "Qualitative review pending",
     }

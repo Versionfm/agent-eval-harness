@@ -42,12 +42,25 @@ python3 -m agent_eval_harness.run_scripted_attempt \
 
 The command rebuilds the task image from the manifest's digest-pinned Dockerfile with Docker networking disabled, probes Python 3.12.13, and then uses the resolved image ID. The agent container has one writable mount at `/task`, no network, no evaluator mount, and no credentials or Docker socket. The evaluator receives a separate fresh copy of the defective repository plus the canonical checks on read-only mounts.
 
-The explicit loop keeps the conversation messages and model-call count in attempt state. Each response either completes the attempt or provides ordered tool calls; tool results are appended to history for the next request. Provider reasoning fields such as `reasoning_content` remain on the assistant message sent with that follow-up. The current budget contract covers model calls, shell command time, and tool-output size; broader deadline and recovery policies are a later slice.
+The explicit loop keeps conversation messages, model requests, provider retries, and time limits in attempt state. Tool requests execute in response order. Errors return to the model as structured results, and each new request receives the time remaining before the attempt deadline. Tool output sent to the model is bounded and marked when truncated; the full output remains in `tool-results/` and the trace. Numeric limits are configurable calibration proposals, not benchmark settings.
 
-The returned functional verdict is independent of the termination reason: a completed attempt can still fail canonical checks. The report shows exposed model/tool activity, the diff, checks, and environment evidence. Cost remains unavailable for the scripted provider and qualitative review stays pending until a reviewer records it.
+The functional verdict stays independent of the termination reason: a completed attempt can fail canonical checks, and a budget-stopped repair can pass them. Provider and tool timeouts, context exhaustion, retries, and interruptions leave traces and candidate artifacts when the harness can collect them. Invalid patches, canonical check failures, and environment failures have separate categories. The evaluator has its own bounded timeout so it can score a partial candidate after agent execution stops. Cost remains unavailable for scripted runs and qualitative review stays pending until a reviewer records it.
 
-The generated `metadata.json`, `trace.jsonl`, `candidate.patch`, `candidate-files.json`, `checks.json`, `result.json`, and `report.html` live in the artifact destination, outside the Git repository. The default command saves the runnable learning checkpoint under `../../orchestration/evidence/issue-3/scripted-repair/`.
+The generated `metadata.json`, `trace.jsonl`, `candidate.patch`, `candidate-files.json`, `checks.json`, `result.json`, and `report.html` live in the artifact destination, outside the Git repository. The default scripted repair command saves its checkpoint under `../../orchestration/evidence/issue-3/scripted-repair/`.
 
 Run the complete Docker attempt tests by setting `AGENT_EVAL_DOCKER_INTEGRATION=1`, `ML_TUTOR_ADMISSION_EVIDENCE`, and `ML_TUTOR_REPOSITORY` before `python3 -m unittest tests.test_scripted_attempt_docker -v`.
+
+## Run the failure and recovery checkpoint
+
+This offline scripted attempt first requests an exact patch that cannot match. The tool returns an error to the model, which corrects the patch on its next turn. It then adds a new file and runs a command with a long result. The two-call proposal ends the attempt before a final model response; the independent evaluator still checks the collected patch.
+
+```bash
+python3 -m agent_eval_harness.run_failure_recovery \
+  --admission-evidence /path/to/issue-2/admission.json \
+  --source-repository /path/to/prompt-engineering-group-project \
+  --output-dir /path/to/failure-recovery
+```
+
+The expected outcome is `termination_reason: model_call_budget` with `functional_verdict: success`, the added file in `candidate.patch`, and all canonical checks passing. Open `report.html`, then inspect the failed and recovered tool events in `trace.jsonl`, the truncation marker in the model-visible result, and its full output file under `tool-results/`. The budgets in this command are demonstration proposals that can be changed with `--max-model-calls` and `--tool-output-limit-bytes`; neither the scripted run nor these values represent live-model calibration.
 
 See the [design interview](docs/design-interview.md), [published specification](docs/SPEC.md), [implementation design](docs/DESIGN.md), [learning sequence](docs/LEARNING_PLAN.md), and [ticket breakdown](docs/TICKETS.md) for the broader project.

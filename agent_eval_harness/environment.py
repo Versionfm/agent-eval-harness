@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import tarfile
+import time
 from typing import Any
 import uuid
 
@@ -18,12 +19,34 @@ class EnvironmentFailure(RuntimeError):
     """Docker setup or evaluator failures that are not task failures."""
 
 
+class CommandTimeout(EnvironmentFailure):
+    """A bounded command timed out; keep any output captured before it stopped."""
+
+    def __init__(
+        self, message: str, *, stdout: str = "", stderr: str = "", timeout_seconds: float
+    ):
+        super().__init__(message)
+        self.stdout = stdout
+        self.stderr = stderr
+        self.timeout_seconds = timeout_seconds
+
+
+def _bounded_timeout(max_seconds: float, deadline: float | None) -> float:
+    if deadline is None:
+        return max_seconds
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise EnvironmentFailure("Attempt deadline reached before the environment operation")
+    return min(max_seconds, remaining)
+
+
 def build_task_environment(
     dockerfile: Path,
     context_directory: Path,
     *,
     expected_base_image: str,
     expected_python_version: str,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Build offline and resolve the resulting local tag to an immutable image ID."""
     dockerfile = dockerfile.resolve()
@@ -38,15 +61,17 @@ def build_task_environment(
             "docker", "build", "--network=none", "--pull=false", "--tag", tag,
             "--file", str(dockerfile), str(context_directory),
         ],
-        timeout=300,
+        timeout=_bounded_timeout(300, deadline),
     )
     build_output = _require_success(build, "Offline task image build")
     image_id = _require_success(
-        _run(["docker", "image", "inspect", "--format", "{{.Id}}", tag], timeout=30),
+        _run(["docker", "image", "inspect", "--format", "{{.Id}}", tag],
+             timeout=_bounded_timeout(30, deadline)),
         "Task image inspection",
     )
     server_version = _require_success(
-        _run(["docker", "version", "--format", "{{.Server.Version}}"], timeout=30),
+        _run(["docker", "version", "--format", "{{.Server.Version}}"],
+             timeout=_bounded_timeout(30, deadline)),
         "Docker server version query",
     )
     runtime = _require_success(
@@ -57,7 +82,7 @@ def build_task_environment(
                 "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=64",
                 image_id, "python", "-c", "import platform; print(platform.python_version())",
             ],
-            timeout=60,
+            timeout=_bounded_timeout(60, deadline),
         ),
         "Prepared Python runtime probe",
     )
@@ -80,7 +105,7 @@ def build_task_environment(
 
 
 def _run(
-    command: list[str], *, timeout: int, input_text: str | None = None, text: bool = True
+    command: list[str], *, timeout: float, input_text: str | None = None, text: bool = True
 ) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(
@@ -94,7 +119,18 @@ def _run(
     except FileNotFoundError as exc:
         raise EnvironmentFailure(f"Required command is unavailable: {command[0]}") from exc
     except subprocess.TimeoutExpired as exc:
-        raise EnvironmentFailure(f"Command timed out after {timeout}s: {command[0]}") from exc
+        def as_text(value: str | bytes | None) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="replace")
+            return value
+        raise CommandTimeout(
+            f"Command timed out after {timeout}s: {command[0]}",
+            stdout=as_text(exc.stdout),
+            stderr=as_text(exc.stderr),
+            timeout_seconds=timeout,
+        ) from exc
 
 
 def _require_success(result: subprocess.CompletedProcess, label: str) -> str:
@@ -120,17 +156,19 @@ def prepare_defective_repository(
     revision: str,
     mutation_path: Path,
     destination: Path,
+    *,
+    deadline: float | None = None,
 ) -> None:
     """Archive the pinned full repository and apply only the admitted mutation."""
     source_repository = source_repository.expanduser().resolve()
     check = _run(
         ["git", "-C", str(source_repository), "cat-file", "-e", f"{revision}^{{commit}}"],
-        timeout=30,
+        timeout=_bounded_timeout(30, deadline),
     )
     _require_success(check, "Pinned source revision lookup")
     archive = _run(
         ["git", "-C", str(source_repository), "archive", "--format=tar", revision],
-        timeout=120,
+        timeout=_bounded_timeout(120, deadline),
         text=False,
     )
     if archive.returncode != 0:
@@ -164,7 +202,7 @@ def prepare_defective_repository(
         raise EnvironmentFailure("Task preparation included Git metadata or curator files")
 
 
-def _docker_command(command: list[str], *, timeout: int, input_text: str | None = None):
+def _docker_command(command: list[str], *, timeout: float, input_text: str | None = None):
     return _run(command, timeout=timeout, input_text=input_text)
 
 
@@ -190,7 +228,7 @@ class DockerTaskContainer:
             "credentials_or_container_socket_mounted": False,
         }
 
-    def start(self) -> None:
+    def start(self, *, timeout_seconds: float = 60, deadline: float | None = None) -> None:
         if self.container_id is not None:
             raise EnvironmentFailure("Task container has already been started")
         created = _docker_command(
@@ -204,17 +242,27 @@ class DockerTaskContainer:
                 "--env", "PYTHONDONTWRITEBYTECODE=1", self.image,
                 "python", "-c", "import time; time.sleep(86400)",
             ],
-            timeout=60,
+            timeout=_bounded_timeout(min(60, timeout_seconds), deadline),
         )
         self.container_id = _require_success(created, "Task container creation")
-        started = _docker_command(["docker", "start", self.container_id], timeout=30)
+        started = _docker_command(
+            ["docker", "start", self.container_id],
+            timeout=_bounded_timeout(min(30, timeout_seconds), deadline),
+        )
         _require_success(started, "Task container startup")
-        self.configuration["observed"] = self.inspect_configuration()
+        self.configuration["observed"] = self.inspect_configuration(
+            timeout_seconds=timeout_seconds, deadline=deadline
+        )
 
-    def inspect_configuration(self) -> dict[str, Any]:
+    def inspect_configuration(
+        self, *, timeout_seconds: float = 30, deadline: float | None = None
+    ) -> dict[str, Any]:
         if self.container_id is None:
             raise EnvironmentFailure("Task container is not running")
-        inspected = _docker_command(["docker", "inspect", self.container_id], timeout=30)
+        inspected = _docker_command(
+            ["docker", "inspect", self.container_id],
+            timeout=_bounded_timeout(min(30, timeout_seconds), deadline),
+        )
         payload = json.loads(_require_success(inspected, "Task container inspection"))[0]
         host = payload.get("HostConfig", {})
         mounts = [
@@ -249,16 +297,18 @@ class DockerTaskContainer:
             raise EnvironmentFailure("Engine socket appeared in the task container mounts")
         return observed
 
-    def close(self) -> None:
+    def close(self, *, timeout_seconds: float = 30) -> None:
         if self.container_id is not None:
-            _docker_command(["docker", "rm", "--force", self.container_id], timeout=30)
+            _docker_command(
+                ["docker", "rm", "--force", self.container_id], timeout=timeout_seconds
+            )
             self.container_id = None
 
     def exec(
         self,
         command: list[str],
         *,
-        timeout: int,
+        timeout: float,
         input_text: str | None = None,
     ) -> subprocess.CompletedProcess:
         if self.container_id is None:
@@ -285,16 +335,31 @@ def _tool_result(
     return {"status": status, "output": output, "error": error, "exit_code": code}
 
 
+def _tool_environment_error(exc: EnvironmentFailure) -> dict[str, Any]:
+    if isinstance(exc, CommandTimeout):
+        result = _tool_result(
+            subprocess.CompletedProcess([], None, stdout=exc.stdout, stderr=exc.stderr),
+            timed_out=str(exc),
+        )
+        result["error_category"] = "command_timeout"
+        result["retryable"] = False
+        return result
+    return {
+        "status": "error", "output": "", "error": str(exc), "exit_code": None,
+        "error_category": "environment_failure", "retryable": False,
+    }
+
+
 def _python_exec(container: DockerTaskContainer, script: str, args: list[str] = (), *, input_text: str | None = None,
-                 timeout: int = 30) -> dict[str, Any]:
+                 timeout: float = 30) -> dict[str, Any]:
     try:
         result = container.exec(["python", "-c", script, *args], timeout=timeout, input_text=input_text)
     except EnvironmentFailure as exc:
-        return {"status": "error", "output": "", "error": str(exc), "exit_code": None}
+        return _tool_environment_error(exc)
     return _tool_result(result)
 
 
-def read_file(container: DockerTaskContainer, path: str) -> dict[str, Any]:
+def read_file(container: DockerTaskContainer, path: str, *, timeout: float = 30) -> dict[str, Any]:
     relative = _safe_relative_path(path)
     script = (
         "from pathlib import Path; import sys; root=Path('/task').resolve(); "
@@ -302,10 +367,10 @@ def read_file(container: DockerTaskContainer, path: str) -> dict[str, Any]:
         "assert root == p or root in p.parents, 'path leaves task repository'; "
         "assert p.is_file(), 'file does not exist'; sys.stdout.write(p.read_text(encoding='utf-8'))"
     )
-    return _python_exec(container, script, [relative.as_posix()])
+    return _python_exec(container, script, [relative.as_posix()], timeout=timeout)
 
 
-def search_text(container: DockerTaskContainer, query: str) -> dict[str, Any]:
+def search_text(container: DockerTaskContainer, query: str, *, timeout: float = 30) -> dict[str, Any]:
     if not query:
         return {"status": "error", "output": "", "error": "search query cannot be empty", "exit_code": None}
     script = r"""
@@ -324,10 +389,12 @@ for path in sorted(root.rglob('*')):
         if query in line.casefold():
             print(f'{path.relative_to(root).as_posix()}:{number}:{line}')
 """
-    return _python_exec(container, script, [query])
+    return _python_exec(container, script, [query], timeout=timeout)
 
 
-def apply_patch(container: DockerTaskContainer, arguments: dict[str, Any]) -> dict[str, Any]:
+def apply_patch(
+    container: DockerTaskContainer, arguments: dict[str, Any], *, timeout: float = 30
+) -> dict[str, Any]:
     try:
         relative = _safe_relative_path(str(arguments["path"]))
         if "content" in arguments and "old_text" not in arguments:
@@ -341,7 +408,10 @@ def apply_patch(container: DockerTaskContainer, arguments: dict[str, Any]) -> di
         else:
             raise ValueError("provide content to create a file, or old_text and new_text to edit one")
     except (KeyError, ValueError, TypeError) as exc:
-        return {"status": "error", "output": "", "error": str(exc), "exit_code": None}
+        return {
+            "status": "error", "output": "", "error": str(exc), "exit_code": None,
+            "error_category": "patch_rejected", "retryable": False,
+        }
 
     payload = dict(arguments, path=relative.as_posix(), operation=operation)
     script = r"""
@@ -372,20 +442,20 @@ else:
 """
     try:
         result = container.exec(
-            ["python", "-c", script], timeout=30, input_text=json.dumps(payload)
+            ["python", "-c", script], timeout=timeout, input_text=json.dumps(payload)
         )
     except EnvironmentFailure as exc:
-        return {"status": "error", "output": "", "error": str(exc), "exit_code": None}
+        return _tool_environment_error(exc)
     return _tool_result(result)
 
 
-def run_shell(container: DockerTaskContainer, command: str, timeout: int) -> dict[str, Any]:
+def run_shell(container: DockerTaskContainer, command: str, timeout: float) -> dict[str, Any]:
     if not isinstance(command, str) or not command.strip():
         return {"status": "error", "output": "", "error": "shell command cannot be empty", "exit_code": None}
     try:
         result = container.exec(["/bin/sh", "-lc", command], timeout=timeout)
     except EnvironmentFailure as exc:
-        return {"status": "error", "output": "", "error": str(exc), "exit_code": None}
+        return _tool_environment_error(exc)
     return _tool_result(result)
 
 
@@ -394,6 +464,8 @@ def run_canonical_checks(
     candidate_repository: Path,
     evaluator_directory: Path,
     expected_python_version: str,
+    *,
+    timeout_seconds: float = 90,
 ) -> dict[str, Any]:
     configuration = {
         "network_mode": "none",
@@ -412,7 +484,7 @@ def run_canonical_checks(
         "PYTHONDONTWRITEBYTECODE=1", image, "python", "/evaluator/checks.py",
     ]
     try:
-        result = _docker_command(command, timeout=90)
+        result = _docker_command(command, timeout=timeout_seconds)
     except EnvironmentFailure as exc:
         return {"status": "error", "checks": {}, "error": str(exc), "container_configuration": configuration}
     if result.returncode != 0:
