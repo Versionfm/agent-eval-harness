@@ -11,6 +11,42 @@ def _pretty(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True, default=str)
 
 
+def _money_label(metric: Any, *, label: str) -> str:
+    if not isinstance(metric, dict):
+        return f"{label} unavailable"
+    status = str(metric.get("status", "unavailable"))
+    amount = metric.get("amount")
+    currency = str(metric.get("currency") or "USD")
+    if isinstance(amount, (int, float)) and status not in {"unavailable", "missing"}:
+        return f"{status}: {amount:.8f} {currency}"
+    return f"{status}: amount unavailable"
+
+
+def _usage_label(records: Any) -> str:
+    if not isinstance(records, list) or not records:
+        return "Unavailable"
+
+    def total(key: str) -> str:
+        values = [
+            value[key] for value in records
+            if isinstance(value, dict)
+            and isinstance(value.get(key), int)
+            and not isinstance(value.get(key), bool)
+        ]
+        if not values:
+            return "unavailable"
+        amount = sum(values)
+        missing = len(records) - len(values)
+        return f"{amount}" if not missing else f"{amount} known, {missing} missing"
+
+    return (
+        f"input {total('prompt_tokens')}; output {total('completion_tokens')}; "
+        f"reasoning {total('reasoning_tokens')}; "
+        f"cache hit {total('prompt_cache_hit_tokens')} / "
+        f"miss {total('prompt_cache_miss_tokens')}"
+    )
+
+
 def render_attempt_report(result: dict[str, Any]) -> str:
     metadata = result.get("metadata", {})
     verdict = str(result.get("functional_verdict", "invalid_environment"))
@@ -64,11 +100,40 @@ def render_attempt_report(result: dict[str, Any]) -> str:
 
     diff = str(result.get("candidate", {}).get("patch", "")) or "No repository changes were collected."
     initial_context = result.get("initial_context", [])
+    cost = metadata.get("cost", {})
+    estimated_cost = cost.get("estimated", {}) if isinstance(cost, dict) else {}
+    reported_cost = cost.get("reported", {}) if isinstance(cost, dict) else {}
+    spend_budget = metadata.get("spend_budget", {})
+    if isinstance(spend_budget, dict) and spend_budget:
+        reserved = spend_budget.get("reserved_or_estimated_usd", "unavailable")
+        limit = spend_budget.get("limit_usd", "unavailable")
+        remaining = spend_budget.get("remaining_usd", "unavailable")
+        spend_label = (
+            f"{reserved} USD reserved or estimated of {limit} USD; "
+            f"{remaining} USD remains"
+        )
+    else:
+        spend_label = "Unavailable"
+    cost_fallback = (
+        "Cost unavailable"
+        if estimated_cost.get("status", "unavailable") == "unavailable"
+        and reported_cost.get("status", "unavailable") == "unavailable"
+        else "Reported charges and estimates are shown separately above."
+    )
     metadata_rows = {
         "Task": metadata.get("task_id", "unavailable"),
         "Source revision": metadata.get("source_revision", "unavailable"),
         "Model": metadata.get("requested_model", "unavailable"),
+        "Observed model": ", ".join(metadata.get("observed_models", [])) or "unavailable",
+        "Provider endpoint": metadata.get("provider_endpoint", "unavailable"),
+        "Model settings": _pretty(metadata.get("model_settings", {})),
+        "Pricing source": metadata.get("pricing_source_url", "unavailable"),
+        "Pricing checked": metadata.get("pricing_source_checked_at", "unavailable"),
+        "Pricing timestamp": metadata.get("pricing_timestamp_utc", "unavailable"),
         "Orchestrator": metadata.get("orchestrator", "unavailable"),
+        "Graph node steps": metadata.get("graph_step_count", "not applicable"),
+        "Graph node step limit": metadata.get("graph_step_limit", "not applicable"),
+        "Graph limit source": metadata.get("graph_step_limit_source", "not applicable"),
         "Termination": termination,
         "Functional verdict": verdict,
         "Failure category": result.get("failure_category", "none"),
@@ -79,8 +144,10 @@ def render_attempt_report(result: dict[str, Any]) -> str:
             f"{metadata.get('retry_count', 'unavailable')}"
         ),
         "Candidate artifacts": result.get("candidate", {}).get("status", "unavailable"),
-        "Token usage": "Unavailable unless reported by the provider",
-        "Cost": "Cost unavailable",
+        "Token usage": _usage_label(metadata.get("usage_by_call", [])),
+        "Reported charge": _money_label(reported_cost, label="Reported charge"),
+        "Estimated cost": _money_label(estimated_cost, label="Estimated cost"),
+        "USD spending ceiling": spend_label,
         "Qualitative review": "Qualitative review pending",
     }
     rows = "".join(
@@ -96,7 +163,7 @@ def render_attempt_report(result: dict[str, Any]) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Scripted repair attempt</title>
+  <title>Coding-agent attempt report</title>
   <style>
     :root {{ color-scheme: light; font: 15px/1.55 system-ui, sans-serif; color: #1f2933; background: #f3f5f7; }}
     body {{ max-width: 1050px; margin: 28px auto; padding: 0 18px; }}
@@ -114,7 +181,7 @@ def render_attempt_report(result: dict[str, Any]) -> str:
   </style>
 </head>
 <body><main>
-  <h1>Scripted coding-agent attempt</h1>
+  <h1>Coding-agent attempt</h1>
   <p><span class="badge {verdict_class}">{html.escape(verdict.replace('_', ' '))}</span></p>
   <dl>{rows}</dl>
   {error_html}
@@ -122,6 +189,6 @@ def render_attempt_report(result: dict[str, Any]) -> str:
   <h2>Attempt timeline</h2>{event_html}
   <h2>Candidate patch</h2><pre>{html.escape(diff)}</pre>
   <h2>Fresh canonical evaluation</h2>{check_table}
-  <p>Cost unavailable. Qualitative review pending.</p>
+  <p>{html.escape(cost_fallback)} Qualitative review pending.</p>
 </main></body></html>
 """

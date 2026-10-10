@@ -453,6 +453,75 @@ def _record(trace: list[dict[str, Any]], event_type: str, **data: Any) -> dict[s
     return event
 
 
+def _cost_summary(usage_records: list[dict[str, Any]], trace: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize provider evidence without turning missing usage into charges."""
+    model_events = [event for event in trace if event.get("type") == "model"]
+    request_events = [
+        event for event in model_events if event.get("status") != "budget_stopped"
+    ]
+    billing_records = [
+        usage.get("billing") for usage in usage_records
+        if isinstance(usage, dict) and isinstance(usage.get("billing"), dict)
+    ]
+    if not billing_records:
+        unavailable = {"status": "unavailable", "amount": None, "currency": "USD"}
+        return {"reported": dict(unavailable), "estimated": dict(unavailable)}
+
+    known_estimates = []
+    known_reports = []
+    for billing in billing_records:
+        estimate = billing.get("estimated_cost", {})
+        if (isinstance(estimate, dict) and estimate.get("status") == "estimated"
+                and isinstance(estimate.get("amount"), (int, float))):
+            known_estimates.append(float(estimate["amount"]))
+        report = billing.get("reported_cost", {})
+        if (isinstance(report, dict) and report.get("status") == "reported"
+                and isinstance(report.get("amount"), (int, float))):
+            known_reports.append(float(report["amount"]))
+
+    missing = max(0, len(request_events) - len(known_estimates))
+    if known_estimates:
+        estimated = {
+            "status": "partial" if missing else "estimated",
+            "amount": round(sum(known_estimates), 12),
+            "currency": "USD",
+            "missing_usage_calls": missing,
+            "request_count": len(request_events),
+        }
+    else:
+        estimated = {
+            "status": "unavailable", "amount": None, "currency": "USD",
+            "missing_usage_calls": len(request_events),
+            "request_count": len(request_events),
+        }
+
+    missing_reports = max(0, len(request_events) - len(known_reports))
+    if known_reports:
+        reported = {
+            "status": "partial" if missing_reports else "reported",
+            "amount": round(sum(known_reports), 12),
+            "currency": "USD",
+            "missing_charge_calls": missing_reports,
+            "request_count": len(request_events),
+        }
+    else:
+        reported = {
+            "status": "unavailable", "amount": None, "currency": "USD",
+            "missing_charge_calls": len(request_events),
+            "request_count": len(request_events),
+        }
+    return {"reported": reported, "estimated": estimated}
+
+
+def _observed_models(usage_records: list[dict[str, Any]]) -> list[str]:
+    models = []
+    for usage in usage_records:
+        model_name = usage.get("observed_model") if isinstance(usage, dict) else None
+        if isinstance(model_name, str) and model_name and model_name not in models:
+            models.append(model_name)
+    return models
+
+
 def _request_model_turn(
     *,
     messages: list[dict[str, Any]],
@@ -618,6 +687,14 @@ def _request_model_turn(
         response=response_payload,
     )
     messages.append(_assistant_message(response))
+    if usage.get("provider_finish_reason") == "length":
+        termination = "provider_output_limit"
+        _record(
+            trace, "termination", reason=termination,
+            error_category="provider_output_limit", provider_finish_reason="length",
+            model_calls=model_call_count,
+        )
+        return response, model_call_count, termination
     if not response.tool_calls:
         termination = "agent_completed"
         _record(trace, "termination", reason=termination, model_calls=model_call_count)
@@ -754,6 +831,14 @@ def attempt_and_evaluate(
             "qualitative_review": {"status": "pending"},
         },
     }
+    provider_metadata = getattr(model, "run_metadata", None)
+    if callable(provider_metadata):
+        try:
+            result["metadata"].update(_json_copy(provider_metadata()))
+        except Exception as exc:
+            result["metadata"]["provider_metadata_error"] = (
+                f"{type(exc).__name__}: {exc}"
+            )
     started = time.monotonic()
     attempt_deadline = started + budgets.attempt_deadline_seconds
     work_deadline = attempt_deadline - budgets.cleanup_timeout_seconds
@@ -806,8 +891,10 @@ def attempt_and_evaluate(
             if orchestrator == "langgraph":
                 from agent_eval_harness.langgraph_attempt import run_attempt_graph
 
-                graph_step_limit = budgets.max_graph_steps or (
-                    2 * budgets.max_model_calls + 1
+                graph_step_limit = (
+                    budgets.max_graph_steps
+                    if budgets.max_graph_steps is not None
+                    else 2 * budgets.max_model_calls + 1
                 )
 
                 def graph_model_step(state: dict[str, Any]) -> dict[str, Any]:
@@ -910,6 +997,18 @@ def attempt_and_evaluate(
             result["termination_reason"] = termination
             result["metadata"]["model_call_count"] = model_call_count
             result["metadata"]["usage_by_call"] = usage_records
+            result["metadata"]["observed_models"] = _observed_models(usage_records)
+            result["metadata"]["cost"] = _cost_summary(usage_records, trace)
+            snapshotter = getattr(model, "accounting_snapshot", None)
+            if callable(snapshotter):
+                try:
+                    result["metadata"]["spend_budget"] = snapshotter()
+                except Exception as exc:
+                    result["metadata"]["spend_budget"] = {
+                        "status": "unavailable",
+                        "error_category": "accounting_snapshot_error",
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
             result["metadata"].setdefault("retry_count", 0)
             result["attempt_container_configuration"] = attempt_container.configuration
             cleanup_timeout = min(
@@ -1042,6 +1141,18 @@ def attempt_and_evaluate(
         result["metadata"]["model_call_count"] = model_call_count
         result["metadata"]["retry_count"] = result["metadata"].get("retry_count", 0)
         result["metadata"].setdefault("usage_by_call", usage_records)
+        result["metadata"]["observed_models"] = _observed_models(usage_records)
+        result["metadata"]["cost"] = _cost_summary(usage_records, trace)
+        snapshotter = getattr(model, "accounting_snapshot", None)
+        if callable(snapshotter):
+            try:
+                result["metadata"]["spend_budget"] = snapshotter()
+            except Exception as exc:
+                result["metadata"]["spend_budget"] = {
+                    "status": "unavailable",
+                    "error_category": "accounting_snapshot_error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
         result["metadata"].setdefault(
             "attempt_duration_seconds", round(time.monotonic() - started, 6)
         )

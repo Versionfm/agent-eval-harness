@@ -46,6 +46,10 @@ class RetryableProviderError(RuntimeError):
     """Provider transport failure that may succeed when the same request is retried."""
 
 
+class ProviderRequestError(RuntimeError):
+    """A provider rejected a request or returned an invalid response."""
+
+
 class RequestBudgetExceeded(RuntimeError):
     """A provider adapter refused a request that would exceed its spend budget."""
 

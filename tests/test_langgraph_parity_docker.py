@@ -83,6 +83,9 @@ class LangGraphParityDockerTests(unittest.TestCase):
             for artifact_directory in (Path(temporary) / "python", Path(temporary) / "graph"):
                 self.assertTrue((artifact_directory / "result.json").is_file())
                 self.assertTrue((artifact_directory / "report.html").is_file())
+            graph_report = (Path(temporary) / "graph" / "report.html").read_text()
+            self.assertIn("Graph node steps", graph_report)
+            self.assertIn("Graph limit source", graph_report)
 
         self.assertEqual(python_result["termination_reason"], "agent_completed")
         self.assertEqual(graph_result["termination_reason"], "agent_completed")
@@ -262,6 +265,69 @@ class LangGraphParityDockerTests(unittest.TestCase):
             model_event = next(event for event in result["trace"] if event["type"] == "model")
             self.assertEqual(model_event["status"], "budget_stopped")
             self.assertEqual(model_event["error_category"], "spending_budget")
+
+    def test_provider_accounting_and_output_limit_stop_are_shared(self):
+        class OutputLimitedModel:
+            def __init__(self):
+                self.requests = []
+
+            def complete(self, request):
+                self.requests.append(request)
+                return ModelResponse(
+                    tool_calls=(ToolCall("read_file", {"path": "app/source.py"}, "must-not-run"),),
+                    usage={
+                        "prompt_tokens": 100,
+                        "completion_tokens": 1024,
+                        "provider_finish_reason": "length",
+                        "billing": {
+                            "estimated_cost": {
+                                "status": "estimated", "amount": 0.001, "currency": "USD",
+                            },
+                            "reported_cost": {
+                                "status": "unavailable", "amount": None, "currency": "USD",
+                            },
+                        },
+                    },
+                    observed_model="fixture-observed-v1",
+                )
+
+            def run_metadata(self):
+                return {"provider_endpoint": "https://example.invalid/v1"}
+
+            def accounting_snapshot(self):
+                return {"status": "within_limit", "remaining_usd": "0.010000"}
+
+        results = []
+        with tempfile.TemporaryDirectory(prefix="langgraph-provider-output-limit-") as temporary:
+            for orchestrator in ("python-loop", "langgraph"):
+                model = OutputLimitedModel()
+                result = attempt_and_evaluate(
+                    admitted_task=self.task,
+                    model=model,
+                    model_config=ModelConfig(
+                        provider="controlled", requested_model="output-limit-fixture"
+                    ),
+                    budgets=AttemptBudgets(max_model_calls=3),
+                    artifact_directory=Path(temporary) / orchestrator,
+                    orchestrator=orchestrator,
+                )
+                results.append((result, model))
+
+        for result, model in results:
+            self.assertEqual(result["termination_reason"], "provider_output_limit")
+            self.assertEqual(result["metadata"]["model_call_count"], 1)
+            self.assertEqual(result["metadata"]["observed_models"], ["fixture-observed-v1"])
+            self.assertEqual(result["metadata"]["provider_endpoint"], "https://example.invalid/v1")
+            self.assertEqual(result["metadata"]["spend_budget"]["status"], "within_limit")
+            self.assertEqual(result["metadata"]["cost"]["estimated"]["amount"], 0.001)
+            self.assertEqual(result["metadata"]["cost"]["reported"]["status"], "unavailable")
+            self.assertEqual(
+                [event for event in result["trace"] if event["type"] == "tool"], []
+            )
+            self.assertEqual(len(model.requests), 1)
+        self.assertEqual(
+            results[0][0]["metadata"]["cost"], results[1][0]["metadata"]["cost"]
+        )
 
 
 

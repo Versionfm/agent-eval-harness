@@ -44,11 +44,37 @@ The command rebuilds the task image from the manifest's digest-pinned Dockerfile
 
 The explicit loop keeps conversation messages, model requests, provider retries, and time limits in attempt state. Tool requests execute in response order. Errors return to the model as structured results, and each new request receives the time remaining before the attempt deadline. Tool output sent to the model is bounded and marked when truncated; the full output remains in `tool-results/` and the trace. Numeric limits are configurable calibration proposals, not benchmark settings.
 
-The functional verdict stays independent of the termination reason: a completed attempt can fail canonical checks, and a budget-stopped repair can pass them. Provider and tool timeouts, context exhaustion, retries, and interruptions leave traces and candidate artifacts when the harness can collect them. Invalid patches, canonical check failures, and environment failures have separate categories. The evaluator has its own bounded timeout so it can score a partial candidate after agent execution stops. Cost remains unavailable for scripted runs and qualitative review stays pending until a reviewer records it.
+The functional verdict stays independent of the termination reason: a completed attempt can fail canonical checks, and a budget-stopped repair can pass them. Provider and tool timeouts, context exhaustion, retries, and interruptions leave traces and candidate artifacts when the harness can collect them. Invalid patches, canonical check failures, and environment failures have separate categories. The evaluator has its own bounded timeout so it can score a partial candidate after agent execution stops. Scripted runs have unavailable cost; direct-provider runs separate reported charges, token-based estimates, missing usage, and conservative spend reservations. Qualitative review stays pending until a reviewer records it.
 
 The generated `metadata.json`, `trace.jsonl`, `candidate.patch`, `candidate-files.json`, `checks.json`, `result.json`, and `report.html` live in the artifact destination, outside the Git repository. The default scripted repair command saves its checkpoint under `../../orchestration/evidence/issue-3/scripted-repair/`.
 
 Run the complete Docker attempt tests by setting `AGENT_EVAL_DOCKER_INTEGRATION=1`, `ML_TUTOR_ADMISSION_EVIDENCE`, and `ML_TUTOR_REPOSITORY` before `python3 -m unittest tests.test_scripted_attempt_docker -v`.
+
+## Run the bounded DeepSeek attempt
+
+The direct adapter calls `https://api.deepseek.com/chat/completions` with `deepseek-flash`, thinking enabled at low effort, and at most 8,192 output tokens. It preserves `reasoning_content` in follow-up tool requests, normalizes tool calls and cache usage, and applies `ModelRequest.timeout_seconds` at the blocking HTTP transport. The credential file is read by the outer Python process; the task container receives no API key.
+
+Run the combined smoke and repair command only after creating a private text file containing the API key. The smoke uses at most 512 output tokens and must complete one provider-selected `search_text` call plus a follow-up response before the repair starts. It does not force `tool_choice`, and it never edits a repository or executes a shell command. Both stages stop before sending any request whose conservative peak-rate reservation would exceed its local or shared USD ceiling:
+
+```bash
+python3 -m agent_eval_harness.run_deepseek_attempt \
+  --credential-file /path/to/private/deepseek-api-key.txt \
+  --admission-evidence /path/to/issue-2/admission.json \
+  --source-repository /path/to/prompt-engineering-group-project \
+  --artifact-dir /path/to/issue-5-deepseek
+```
+
+The command defaults to USD 1.00 shared for the smoke and repair, USD 0.10 for the smoke, and USD 0.30 for the repair attempt. Each request reserves peak uncached input plus its maximum output cost before HTTP; retries consume a fresh reservation, and missing usage leaves the worst-case reservation in place. Known usage is estimated from the current pricing snapshot and the request's UTC peak/off-peak band. The HTML report keeps provider-reported charges separate from estimates and shows missing usage explicitly. The official price page is mutable, so the artifact records its source, checked date, and per-request pricing timestamp.
+
+To run the smoke by itself, without starting a repair:
+
+```bash
+python3 -m agent_eval_harness.deepseek_smoke \
+  --credential-file /path/to/private/deepseek-api-key.txt \
+  --artifact-dir /path/to/issue-5-smoke
+```
+
+The provider fixtures can be run offline with `python3 -m unittest tests.test_deepseek_provider tests.test_report_cost -v`. Docker-backed fixtures exercise the same public attempt-and-evaluation boundary when `AGENT_EVAL_DOCKER_INTEGRATION=1`, `ML_TUTOR_ADMISSION_EVIDENCE`, and `ML_TUTOR_REPOSITORY` are set; they do not need provider credentials.
 
 ## Run the failure and recovery checkpoint
 
