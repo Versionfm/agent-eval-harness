@@ -240,21 +240,44 @@ PYTHONPATH=live-tracker/src "$PYTHON" -m live_tracker.playback \
 
 ### Learning walkthrough and evidence status
 
-Each behavior is labelled by how it was verified. Live demonstration stays pending until the lead's run.
+Each behavior is labelled by how it was verified. The live pair ran once on 2026-10-10 (see "Live pair result" below).
 
 | Behavior | Implemented | Deterministic-tested | Browser-verified | Live-demonstrated |
 |---|---|---|---|---|
-| One matched pair, one recorder per attempt, through the existing coordinator | yes | yes (`test_live_pair_docker`, Docker) | no | pending lead run |
-| Projections and comparison report built from observed attempt directories | yes | yes (Docker) | no | pending lead run |
+| One matched pair, one recorder per attempt, through the existing coordinator | yes | yes (`test_live_pair_docker`, Docker) | yes (live workbench followed the Python attempt) | yes |
+| Projections and comparison report built from observed attempt directories | yes | yes (Docker) | yes (playback of both saved attempts, projected reports) | yes |
 | Observed vs unobserved parity of model-visible messages, candidate and verdict, both orchestrators | yes | yes (Docker) | no | n/a |
 | Recording failure stops the attempt per orchestrator (`FaultyStorage`) | yes | yes (Docker) | no | n/a |
 | Interrupted provider call per orchestrator (controlled `KeyboardInterrupt`, recorded as `interrupted`) | yes | yes (Docker) | no | n/a |
 | Shared ledger covers smoke, both attempts and retries; a request that cannot fit is refused with no transport call | yes | yes (`test_matched_observation`, offline) | n/a | n/a |
-| Stage ceilings admit one output-limit request; combined ceiling covers stages | yes | yes (offline) | n/a | pending lead run |
-| Manifest retains budgets, pricing provenance, usage, estimated vs reported cost, overhead, deadline use, pending reviews | yes | yes (offline and Docker) | n/a | pending lead run |
-| Two viewer URLs for the live workbench | yes | yes (server registry, Docker) | not run in this ticket | pending lead run |
+| Stage ceilings admit one output-limit request; combined ceiling covers stages | yes | yes (offline) | n/a | yes (no budget stop) |
+| Manifest retains budgets, pricing provenance, usage, estimated vs reported cost, overhead, deadline use, pending reviews | yes | yes (offline and Docker) | n/a | yes |
+| Two viewer URLs for the live workbench | yes | yes (server registry, Docker) | yes | yes |
 | In-page attempt picker | deferred | no | no | no |
 | Token streaming and comparison layout C | deferred | no | no | no |
+
+### Live pair result (2026-10-10)
+
+One fresh matched pair, `deepseek-flash` (observed `deepseek-flash`), off-peak rates checked against the
+[pricing page](https://api-docs.deepseek.com/quick_start/pricing/) at preflight and matching `deepseek.py`.
+Settings: 10 model calls, 128 KiB context, 2,048 output tokens, 600 s deadline. Ceilings: USD 0.10 combined,
+0.01 smoke, 0.045 per attempt (raised from the 0.04 default so a near-full-context request still fits).
+Evidence: `outputs/evidence/live-tracker-2026-10-10/` (`live-pair.json`, `experiment.json`, `report.html`).
+
+| | Python loop | LangGraph |
+|---|---|---|
+| Model calls | 9 | 7 |
+| Termination | `provider_output_limit` | `provider_output_limit` |
+| Candidate patch | empty | empty |
+| Canonical checks | 6/9, failure | 6/9, failure |
+| Estimated cost (USD) | 0.00609 | 0.00518 |
+| Recording | complete, 87 events, 0 unresolved | complete, 96 events, 0 unresolved |
+| Recorder time | 0.21 s (0.5% of 40.7 s) | 0.20 s (0.5% of 38.5 s) |
+
+Total estimated spend including the smoke request: USD 0.0114 of 0.10. Billed cost is unavailable from the provider.
+Both attempts stopped when a response hit the 2,048-token output limit before saving an edit; the 6 passing checks
+are the ones the unrepaired defect already passes. This is an observed outcome of one pair, not a ranking and not
+evidence about the tracker's correctness. No replacement attempts were bought. Codex reviews remain pending.
 
 Walkthrough after the live run:
 
