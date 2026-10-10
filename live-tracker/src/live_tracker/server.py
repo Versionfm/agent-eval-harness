@@ -10,6 +10,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from live_tracker.reader import read_attempt_history
+from live_tracker.sources import resolve_source
 
 
 WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
@@ -34,6 +35,8 @@ class _TrackerHandler(BaseHTTPRequestHandler):
             return self._static("/".join(segments[2:]))
         if url.path == "/api/attempts":
             return self._json([self._summary(item) for item in self.attempts.items()])
+        if url.path == "/api/sources":
+            return self._source(url.query)
         if len(segments) >= 5 and segments[1:3] == ["api", "attempts"]:
             directory = self.attempts.get(segments[3])
             if directory is None:
@@ -46,6 +49,13 @@ class _TrackerHandler(BaseHTTPRequestHandler):
             if action == "artifacts" and len(segments) >= 6:
                 return self._artifact(directory, "/".join(segments[5:]))
         self._json({"error": "not found"}, 404)
+
+    def _source(self, query: str) -> None:
+        identity = parse_qs(query).get("identity", [""])[0]
+        try:
+            return self._json(resolve_source(identity))
+        except (KeyError, ValueError):
+            return self._json({"error": "unregistered source identity"}, 404)
 
     def _summary(self, item: tuple[str, Path]) -> dict[str, Any]:
         attempt_id, directory = item

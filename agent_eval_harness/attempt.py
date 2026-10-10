@@ -271,6 +271,31 @@ def _observed_models(usage_records: list[dict[str, Any]]) -> list[str]:
     return models
 
 
+def _selected_point_state(
+    messages: list[dict[str, Any]], model_call_count: int, *, budgets: Any,
+    usage_records: list[dict[str, Any]], trace: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Budget, context and accounting facts known from history so far (observer copy only)."""
+    usage_totals: dict[str, float] = {}
+    for usage in usage_records:
+        for key, value in usage.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                usage_totals[key] = usage_totals.get(key, 0) + value
+    cost = _cost_summary(usage_records, trace)
+    return {
+        "model_calls": model_call_count,
+        "max_model_calls": budgets.max_model_calls,
+        "context_bytes": _context_size_bytes(messages),
+        "max_context_bytes": budgets.max_context_bytes,
+        "tool_result_messages": sum(1 for message in messages if message.get("role") == "tool"),
+        "tool_output_limit_bytes": budgets.tool_output_limit_bytes,
+        "attempt_deadline_seconds": budgets.attempt_deadline_seconds,
+        "usage_totals": usage_totals,
+        "estimated_cost": cost["estimated"],
+        "reported_cost": cost["reported"],
+    }
+
+
 def _evaluate_candidate_changes(
     defect_repository: Path,
     changes: list[dict[str, Any]],
@@ -537,10 +562,20 @@ def attempt_and_evaluate(
                         event_sink=sink,
                     )
 
+                def snapshot_python_state(
+                    current_messages: list[dict[str, Any]], current_count: int
+                ) -> dict[str, Any]:
+                    return _selected_point_state(
+                        current_messages, current_count, budgets=budgets,
+                        usage_records=usage_records, trace=trace,
+                    )
+
                 termination, model_call_count = run_python_loop(
                     messages,
                     request_model=request_python_turn,
                     execute_tools=execute_python_turn,
+                    event_sink=sink,
+                    snapshot=None if sink is NULL_EVENT_SINK else snapshot_python_state,
                 )
 
             result["termination_reason"] = termination
