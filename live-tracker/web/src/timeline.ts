@@ -1,21 +1,15 @@
-// Minimal timeline client: one attempt, rendered from the saved history plus SSE.
+// Minimal timeline client: one attempt, rendered from the SSE stream (history, then live).
 // Evidence is written with textContent only; links are built from validated paths.
 
-export {};
+import { Accepted, Progress, TrackerEvent, follow } from "./connection.js";
 
-interface TrackerEvent {
-  sequence: number;
-  type: string;
-  operation_id?: string;
-  data: Record<string, any>;
-  artifacts: { role: string; path: string; bytes: number; sha256: string }[];
-}
+export {};
 
 const ARTIFACT_PATH = /^artifacts\/[0-9a-f]{64}$/;
 const timeline = document.getElementById("timeline") as HTMLOListElement;
 const status = document.getElementById("status") as HTMLElement;
-let attemptId = "";
-let lastSequence = 0;
+const detail = document.getElementById("detail") as HTMLElement;
+const lag = document.getElementById("lag") as HTMLElement;
 
 function describe(event: TrackerEvent): string {
   const data = event.data;
@@ -39,20 +33,17 @@ function describe(event: TrackerEvent): string {
   }
 }
 
-function render(event: TrackerEvent): void {
-  if (event.sequence <= lastSequence) {
-    return; // duplicate from reconnect or history overlap
-  }
-  if (lastSequence > 0 && event.sequence > lastSequence + 1) {
-    const gap = document.createElement("li");
-    gap.className = "gap";
-    gap.textContent = `missing events ${lastSequence + 1} to ${event.sequence - 1}`;
-    timeline.append(gap);
-  }
-  lastSequence = event.sequence;
+function addGap(from: number, to: number): void {
+  const gap = document.createElement("li");
+  gap.className = "gap";
+  gap.textContent = `missing events ${from} to ${to}`;
+  timeline.append(gap);
+}
 
+function renderEvent(attemptId: string, event: TrackerEvent): void {
   const row = document.createElement("li");
   row.dataset.type = event.type;
+  row.dataset.sequence = String(event.sequence);
   const sequence = document.createElement("span");
   sequence.className = "sequence";
   sequence.textContent = `#${event.sequence}`;
@@ -79,28 +70,29 @@ function render(event: TrackerEvent): void {
   timeline.append(row);
 }
 
-function follow(): void {
-  const source = new EventSource(
-    `/api/attempts/${encodeURIComponent(attemptId)}/stream?after=${lastSequence}`
-  );
-  source.onopen = () => {
-    status.textContent = "live";
-  };
-  source.addEventListener("attempt-event", (message) => {
-    const event = JSON.parse((message as MessageEvent).data) as TrackerEvent;
-    render(event);
-    if (event.type === "attempt_finished") {
-      source.close();
-      status.textContent = "finished";
-    }
-  });
-  source.addEventListener("recording-error", () => {
-    source.close();
-    status.textContent = "recording error: evidence is incomplete";
-  });
-  source.onerror = () => {
-    status.textContent = source.readyState === EventSource.CLOSED ? "closed" : "reconnecting";
-  };
+function onAccepted(attemptId: string, event: TrackerEvent, accepted: Accepted): void {
+  if (accepted.kind === "duplicate") {
+    return; // redelivered after a reconnect: already displayed
+  }
+  if (accepted.kind === "conflict") {
+    const row = document.createElement("li");
+    row.className = "conflict";
+    row.textContent = `evidence conflict: ${accepted.message}`;
+    timeline.append(row);
+    return;
+  }
+  if (accepted.gap) {
+    addGap(accepted.gap[0], accepted.gap[1]);
+  }
+  renderEvent(attemptId, event);
+}
+
+function onProgress(progress: Progress): void {
+  status.textContent = progress.state;
+  status.dataset.state = progress.state;
+  detail.textContent = progress.detail;
+  const behind = Math.max(progress.latest - progress.displayed, 0);
+  lag.textContent = `displayed #${progress.displayed} · latest #${progress.latest} · lag ${behind}`;
 }
 
 async function start(): Promise<void> {
@@ -109,16 +101,11 @@ async function start(): Promise<void> {
     status.textContent = "no attempts registered";
     return;
   }
-  attemptId = attempts[0].attempt_id;
-  const history = (await (await fetch(`/api/attempts/${encodeURIComponent(attemptId)}/events?after=0`)).json()) as {
-    events: TrackerEvent[];
-  };
-  history.events.forEach(render);
-  if (history.events.some((event) => event.type === "attempt_finished")) {
-    status.textContent = "finished";
-    return;
-  }
-  follow();
+  const attemptId = attempts[0].attempt_id;
+  follow(attemptId, {
+    onAccepted: (event, accepted) => onAccepted(attemptId, event, accepted),
+    onProgress,
+  });
 }
 
 start().catch((error: unknown) => {

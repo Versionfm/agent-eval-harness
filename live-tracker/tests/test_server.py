@@ -69,7 +69,8 @@ class LoopbackServerTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(content_type, "text/event-stream")
-        frames = [frame for frame in body.decode("utf-8").split("\n\n") if frame.strip()]
+        # retry: and head frames are control frames; only attempt events carry an id.
+        frames = [frame for frame in body.decode("utf-8").split("\n\n") if frame.startswith("id: ")]
         self.assertEqual(
             [frame.splitlines()[0] for frame in frames],
             [f"id: {self.attempt_id}:2", f"id: {self.attempt_id}:3"],
