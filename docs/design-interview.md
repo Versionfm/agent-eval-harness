@@ -26,6 +26,10 @@
 - Tools: file reading, text search, patch editing, and shell execution, with arguments, results, duration, and errors recorded.
 - Shell commands start in the task repository within a disposable container. Canonical checks run in a fresh evaluator environment outside the agent's control.
 - Reports: machine-readable traces plus clean, legible local HTML with event timeline, exposed reasoning summaries, tool results, code diff, acceptance results, and separate evaluator review. Compare implementations side by side.
+- Connect one inexpensive hosted model first through a replaceable adapter, then add a local model.
+- Initial context: task description, repository instructions, and a short file map; source discovery happens through tools.
+- Stop on agent-declared completion or hard limits on turns, elapsed time, and tool-output size. Preserve partial traces and patches. Calibrate numeric limits with a smoke run.
+- Milestone acceptance requires baseline-pass, defect-fail, known-repair-pass evidence and comparable traces/reports from both implementations. Agent failure is a valid measured outcome.
 
 ## Decision tree
 
@@ -104,7 +108,7 @@ No candidate has been cloned or executed during this interview. Counts describe 
 
 The user has confirmed the direction but not a complete implementation design. Continue the interview until remaining branches are resolved and shared understanding is explicitly confirmed.
 
-## Round 5 — awaiting answers
+## Round 5 — answered
 
 19. First model integration: one hosted model, one local model, or both immediately?
    Recommendation: begin with one inexpensive hosted model behind a replaceable adapter, then validate a local model before comparisons. Exact models require current availability and hardware checks.
@@ -116,3 +120,22 @@ The user has confirmed the direction but not a complete implementation design. C
    Recommendation: prove the clean baseline passes, the introduced defect fails independent checks, a known repair passes, and both harnesses produce comparable traces and reports; an agent failure remains a valid measured outcome.
 
 Detailed context management, provider access, task packaging, and execution policies will follow these answers. Implementation remains pending final confirmation of shared understanding.
+
+## Hosted model proposal — not yet confirmed
+
+Official OpenAI documentation checked on 2026-10-10 supports `gpt-5.4-mini` as an initial candidate: coding-oriented positioning, function calling, structured outputs, and a documented snapshot `gpt-5.4-mini-2026-03-17`. Standard text pricing is USD 0.75 per million input tokens, USD 0.075 per million cached input tokens, and USD 4.50 per million output tokens. A hypothetical attempt totaling 100,000 uncached input tokens and 10,000 billed output tokens costs USD 0.12 at those rates; this is illustrative, not a predicted attempt cost.
+
+Source: https://developers.openai.com/api/docs/models/gpt-5.4-mini
+
+Account access, live tool-call reliability, usage, and latency have not been verified. Model selection remains a proposal until the user confirms it.
+
+## Round 6 — awaiting answers
+
+23. Initial hosted model: accept the proposed GPT-5.4 mini snapshot?
+   Recommendation: yes, with low reasoning effort initially and the same settings in both orchestrators. Record every setting in attempt metadata.
+24. Context overflow policy: stop at the context budget or compact and continue?
+   Recommendation: first stop explicitly with preserved artifacts; introduce traceable context compaction as a later controlled harness experiment.
+25. Network boundary: should the task container have internet access?
+   Recommendation: prepare dependencies before the run, disable task-container networking, and make model requests from the outer harness. Keep API credentials outside the task container.
+26. Error recovery policy: silently retry, expose every failure to the agent, or distinguish provider errors from tool errors?
+   Recommendation: bounded, logged retries for transient provider failures; return tool errors to the agent as structured results. Record all failed requests and retries in usage/trace data when available.
