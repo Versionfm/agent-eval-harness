@@ -6,7 +6,6 @@ import io
 import hashlib
 import importlib.util
 import json
-import os
 from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
@@ -14,6 +13,15 @@ import tarfile
 import time
 from typing import Any
 import uuid
+
+from agent_eval_harness.permissions import (
+    candidate_evaluator_configuration,
+    observed_task_container_configuration,
+    runtime_probe_security_flags,
+    task_container_configuration,
+    task_container_create_flags,
+    task_container_policy_error,
+)
 
 
 class EnvironmentFailure(RuntimeError):
@@ -102,9 +110,8 @@ def build_task_environment(
 def _runtime_probe(image_id: str, *, deadline: float | None) -> subprocess.CompletedProcess:
     name = f"agent-eval-runtime-{uuid.uuid4().hex}"
     command = [
-        "docker", "run", "--rm", "--name", name, "--pull=never", "--network=none",
-        "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,mode=1777,size=16m",
-        "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=64",
+        "docker", "run", "--rm", "--name", name, "--pull=never",
+        *runtime_probe_security_flags(),
         image_id, "python", "-c", "import platform; print(platform.python_version())",
     ]
     try:
@@ -244,21 +251,9 @@ class DockerTaskContainer:
         self.task_repository = task_repository.resolve()
         self.task_mount_read_only = task_mount_read_only
         self.container_id: str | None = None
-        self.configuration = {
-            "network_mode": "none",
-            "root_filesystem_read_only": True,
-            "tmpfs": "/tmp:rw,noexec,nosuid,mode=1777,size=64m",
-            "capabilities_dropped": "ALL",
-            "no_new_privileges": True,
-            "pids_limit": 128,
-            "workdir": "/task",
-            "task_mount_target": "/task",
-            "task_mount_read_only": task_mount_read_only,
-            "evaluator_mount_present": False,
-            "other_mounts": [],
-            "canonical_evaluator_present": False,
-            "credentials_or_container_socket_mounted": False,
-        }
+        self.configuration = task_container_configuration(
+            task_mount_read_only=task_mount_read_only
+        )
 
     def start(self, *, timeout_seconds: float = 60, deadline: float | None = None) -> None:
         if self.container_id is not None:
@@ -266,13 +261,11 @@ class DockerTaskContainer:
         created = _docker_command(
             [
                 "docker", "create", "--pull=never", "--name", f"agent-eval-{uuid.uuid4().hex}",
-                "--network=none", "--read-only", "--tmpfs", self.configuration["tmpfs"],
-                "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=128",
-                "--user", f"{os.getuid()}:{os.getgid()}",
-                "--mount", f"type=bind,source={self.task_repository},target=/task"
-                + (",readonly" if self.task_mount_read_only else ""),
-                "--workdir", "/task", "--env", "PYTHONPATH=/task",
-                "--env", "PYTHONDONTWRITEBYTECODE=1", self.image,
+                *task_container_create_flags(
+                    self.task_repository,
+                    task_mount_read_only=self.task_mount_read_only,
+                ),
+                self.image,
                 "python", "-c", "import time; time.sleep(86400)",
             ],
             timeout=_bounded_timeout(min(60, timeout_seconds), deadline),
@@ -297,38 +290,12 @@ class DockerTaskContainer:
             timeout=_bounded_timeout(min(30, timeout_seconds), deadline),
         )
         payload = json.loads(_require_success(inspected, "Task container inspection"))[0]
-        host = payload.get("HostConfig", {})
-        mounts = [
-            {
-                "destination": mount.get("Destination"),
-                "read_only": not bool(mount.get("RW")),
-                "source": mount.get("Source"),
-            }
-            for mount in payload.get("Mounts", [])
-        ]
-        env_keys = sorted(
-            entry.split("=", 1)[0]
-            for entry in payload.get("Config", {}).get("Env", [])
-            if "=" in entry
+        observed = observed_task_container_configuration(payload)
+        policy_error = task_container_policy_error(
+            observed, task_mount_read_only=self.task_mount_read_only
         )
-        observed = {
-            "image_id": payload.get("Image"),
-            "network_mode": host.get("NetworkMode"),
-            "root_filesystem_read_only": bool(host.get("ReadonlyRootfs")),
-            "capabilities_dropped": host.get("CapDrop", []),
-            "security_options": host.get("SecurityOpt", []),
-            "pids_limit": host.get("PidsLimit"),
-            "mounts": mounts,
-            "environment_variable_names": env_keys,
-            "user": payload.get("Config", {}).get("User"),
-        }
-        if observed["network_mode"] != "none" or not observed["root_filesystem_read_only"]:
-            raise EnvironmentFailure("Task container inspection did not confirm network/root isolation")
-        if (len(mounts) != 1 or mounts[0]["destination"] != "/task"
-                or mounts[0]["read_only"] != self.task_mount_read_only):
-            raise EnvironmentFailure("Task container does not have the expected task-repository mount")
-        if any("docker.sock" in str(mount.get("source")) for mount in mounts):
-            raise EnvironmentFailure("Engine socket appeared in the task container mounts")
+        if policy_error:
+            raise EnvironmentFailure(policy_error)
         return observed
 
     def close(self, *, timeout_seconds: float = 30) -> None:
@@ -364,144 +331,6 @@ class DockerTaskContainer:
             raise
 
 
-def _tool_result(
-    result: subprocess.CompletedProcess,
-    *,
-    timed_out: str | None = None,
-) -> dict[str, Any]:
-    output = result.stdout or ""
-    if result.stderr:
-        output += ("\n" if output else "") + result.stderr
-    code = result.returncode
-    status = "ok" if code == 0 and timed_out is None else "error"
-    error = timed_out or (None if code == 0 else f"command exited with status {code}")
-    return {"status": status, "output": output, "error": error, "exit_code": code}
-
-
-def _tool_environment_error(exc: EnvironmentFailure) -> dict[str, Any]:
-    if isinstance(exc, CommandTimeout):
-        result = _tool_result(
-            subprocess.CompletedProcess([], None, stdout=exc.stdout, stderr=exc.stderr),
-            timed_out=str(exc),
-        )
-        result["error_category"] = "command_timeout"
-        result["retryable"] = False
-        return result
-    return {
-        "status": "error", "output": "", "error": str(exc), "exit_code": None,
-        "error_category": "environment_failure", "retryable": False,
-    }
-
-
-def _python_exec(container: DockerTaskContainer, script: str, args: list[str] = (), *, input_text: str | None = None,
-                 timeout: float = 30) -> dict[str, Any]:
-    try:
-        result = container.exec(["python", "-c", script, *args], timeout=timeout, input_text=input_text)
-    except EnvironmentFailure as exc:
-        return _tool_environment_error(exc)
-    return _tool_result(result)
-
-
-def read_file(container: DockerTaskContainer, path: str, *, timeout: float = 30) -> dict[str, Any]:
-    relative = _safe_relative_path(path)
-    script = (
-        "from pathlib import Path; import sys; root=Path('/task').resolve(); "
-        "p=(root/sys.argv[1]).resolve(); "
-        "assert root == p or root in p.parents, 'path leaves task repository'; "
-        "assert p.is_file(), 'file does not exist'; sys.stdout.write(p.read_text(encoding='utf-8'))"
-    )
-    return _python_exec(container, script, [relative.as_posix()], timeout=timeout)
-
-
-def search_text(container: DockerTaskContainer, query: str, *, timeout: float = 30) -> dict[str, Any]:
-    if not query:
-        return {"status": "error", "output": "", "error": "search query cannot be empty", "exit_code": None}
-    script = r"""
-from pathlib import Path
-import sys
-root = Path('/task').resolve()
-query = sys.argv[1].casefold()
-for path in sorted(root.rglob('*')):
-    if path.is_symlink() or not path.is_file() or '.git' in path.relative_to(root).parts:
-        continue
-    try:
-        text = path.read_text(encoding='utf-8')
-    except (UnicodeError, OSError):
-        continue
-    for number, line in enumerate(text.splitlines(), 1):
-        if query in line.casefold():
-            print(f'{path.relative_to(root).as_posix()}:{number}:{line}')
-"""
-    return _python_exec(container, script, [query], timeout=timeout)
-
-
-def apply_patch(
-    container: DockerTaskContainer, arguments: dict[str, Any], *, timeout: float = 30
-) -> dict[str, Any]:
-    try:
-        relative = _safe_relative_path(str(arguments["path"]))
-        if "content" in arguments and "old_text" not in arguments:
-            if not isinstance(arguments["content"], str):
-                raise ValueError("content must be text")
-            operation = "create"
-        elif all(key in arguments for key in ("old_text", "new_text")):
-            if not isinstance(arguments["old_text"], str) or not isinstance(arguments["new_text"], str):
-                raise ValueError("old_text and new_text must be text")
-            operation = "replace"
-        else:
-            raise ValueError("provide content to create a file, or old_text and new_text to edit one")
-    except (KeyError, ValueError, TypeError) as exc:
-        return {
-            "status": "error", "output": "", "error": str(exc), "exit_code": None,
-            "error_category": "patch_rejected", "retryable": False,
-        }
-
-    payload = dict(arguments, path=relative.as_posix(), operation=operation)
-    script = r"""
-from pathlib import Path
-import json, sys
-data = json.load(sys.stdin)
-root = Path('/task').resolve()
-target = root.joinpath(*data['path'].split('/'))
-if target.is_symlink():
-    raise ValueError('symbolic-link edits are not supported')
-if root not in target.parent.resolve().parents and target.parent.resolve() != root:
-    raise ValueError('path leaves task repository')
-if data['operation'] == 'create':
-    if target.exists():
-        raise FileExistsError(data['path'])
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(data['content'], encoding='utf-8')
-    print(f"created {data['path']}")
-else:
-    if not target.is_file():
-        raise FileNotFoundError(data['path'])
-    text = target.read_text(encoding='utf-8')
-    count = text.count(data['old_text'])
-    if count != 1:
-        raise ValueError(f"expected one old_text match, found {count}")
-    target.write_text(text.replace(data['old_text'], data['new_text'], 1), encoding='utf-8')
-    print(f"updated {data['path']}")
-"""
-    try:
-        result = container.exec(
-            ["python", "-c", script], timeout=timeout, input_text=json.dumps(payload)
-        )
-    except EnvironmentFailure as exc:
-        return _tool_environment_error(exc)
-    return _tool_result(result)
-
-
-def run_shell(container: DockerTaskContainer, command: str, timeout: float) -> dict[str, Any]:
-    if not isinstance(command, str) or not command.strip():
-        return {"status": "error", "output": "", "error": "shell command cannot be empty", "exit_code": None}
-    try:
-        result = container.exec(["/bin/sh", "-lc", command], timeout=timeout)
-    except EnvironmentFailure as exc:
-        return _tool_environment_error(exc)
-    return _tool_result(result)
-
-
 def run_canonical_checks(
     image: str,
     candidate_repository: Path,
@@ -517,13 +346,7 @@ def run_canonical_checks(
     stdout writes, and process termination in candidate code cannot print or
     choose a functional verdict.
     """
-    configuration = {
-        "network_mode": "none",
-        "root_filesystem_read_only": True,
-        "task_mount_read_only": True,
-        "evaluator_mount_present": False,
-        "credentials_or_container_socket_mounted": False,
-    }
+    configuration = candidate_evaluator_configuration()
     checker_path = evaluator_directory.resolve() / "checks.py"
     if checker_path.is_symlink() or not checker_path.is_file():
         return {

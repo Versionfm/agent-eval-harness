@@ -4,7 +4,7 @@ This repository is a learning project for coding-agent harness engineering and i
 
 The task pins `Versionfm/prompt-engineering-group-project` at `6890d9eae6ebd2967553eaf5a0c5753c26322182`. Its public description is separate from the curator-owned defect, known repair, and canonical checks. The checks use synthetic sections and an injected fake tutor response.
 
-The admission runner creates three disposable source copies, builds a digest-pinned Python 3.12.13 environment without network access, and runs the canonical checks in separate containers. Each check container has no network, a read-only task mount, and a separate read-only evaluator mount. The runner produces machine-readable evidence and a small HTML summary. Setup and evaluator errors are reported as `invalid_environment`; behavior mismatches are `rejected`.
+The admission runner creates three disposable source copies, builds a digest-pinned Python 3.12.13 environment without network access, and probes each variant in a separate container. A probe worker has no network, one read-only task mount, and no curator evaluator, credentials, or container socket. It returns observations; the outer harness loads the curator checks and decides each result. The runner produces machine-readable evidence and a small HTML summary. Setup and evaluator errors are reported as `invalid_environment`; behavior mismatches are `rejected`.
 
 ## Run the admission experiment
 
@@ -40,9 +40,9 @@ python3 -m agent_eval_harness.run_scripted_attempt \
   --output-dir /path/to/scripted-attempt
 ```
 
-The command rebuilds the task image from the manifest's digest-pinned Dockerfile with Docker networking disabled, probes Python 3.12.13, and then uses the resolved image ID. The agent container has one writable mount at `/task`, no network, no evaluator mount, and no credentials or Docker socket. The evaluator receives a separate fresh copy of the defective repository plus the canonical checks on read-only mounts.
+The command rebuilds the task image from the manifest's digest-pinned Dockerfile with Docker networking disabled, probes Python 3.12.13, and then uses the resolved image ID. The agent container has one writable mount at `/task`, no network, no evaluator mount, and no credentials or Docker socket. After collecting the patch, the harness stages it on a fresh defective copy and starts a read-only candidate worker to gather observations. The worker does not receive curator checks; the outer harness loads those checks and maps the observations to the canonical verdict.
 
-The explicit loop keeps conversation messages, model requests, provider retries, and time limits in attempt state. Tool requests execute in response order. Errors return to the model as structured results, and each new request receives the time remaining before the attempt deadline. Tool output sent to the model is bounded and marked when truncated; the full output remains in `tool-results/` and the trace. Numeric limits are configurable calibration proposals, not benchmark settings.
+The explicit `while` loop in `loop.py` advances shared model-request and ordered tool-execution steps. Conversation messages carry through the attempt, provider retries and time limits are enforced for each request, and the next request receives the time remaining before the attempt deadline. Tool errors return to the model as structured results. Tool output sent to the model is bounded and marked when truncated; the full output remains in `tool-results/` and the trace. Numeric limits are configurable calibration proposals, not benchmark settings. See the [component map](docs/COMPONENT_MAP.md) for the call path and the Python-to-LangGraph mapping.
 
 The functional verdict stays independent of the termination reason: a completed attempt can fail canonical checks, and a budget-stopped repair can pass them. Provider and tool timeouts, context exhaustion, retries, and interruptions leave traces and candidate artifacts when the harness can collect them. Invalid patches, canonical check failures, and environment failures have separate categories. The evaluator has its own bounded timeout so it can score a partial candidate after agent execution stops. Scripted runs have unavailable cost; direct-provider runs separate reported charges, token-based estimates, missing usage, and conservative spend reservations. Qualitative review stays pending until a reviewer records it.
 
@@ -173,4 +173,4 @@ attempt. The record is validated against the attempt's task, implementation,
 source revision, and start timestamp. Without a record the report says that
 qualitative review is pending. See [the review record contract](docs/REVIEW_RECORD.md).
 
-See the [design interview](docs/design-interview.md), [published specification](docs/SPEC.md), [implementation design](docs/DESIGN.md), [learning sequence](docs/LEARNING_PLAN.md), and [ticket breakdown](docs/TICKETS.md) for the broader project.
+See the [design interview](docs/design-interview.md), [published specification](docs/SPEC.md), [implementation design](docs/DESIGN.md), [learning sequence](docs/LEARNING_PLAN.md), [component map](docs/COMPONENT_MAP.md), and [ticket breakdown](docs/TICKETS.md) for the broader project.

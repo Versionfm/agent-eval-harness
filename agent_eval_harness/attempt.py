@@ -1,37 +1,23 @@
-"""Run one explicit scripted coding-agent loop and evaluate its patch."""
+"""Run one coding-agent attempt through the shared Python or LangGraph lifecycle."""
 
 from __future__ import annotations
 
-import base64
 import copy
 from dataclasses import dataclass
-from datetime import datetime, timezone
-import difflib
 import hashlib
-import importlib.metadata
 import json
-import platform
-from pathlib import Path, PurePosixPath
-import queue
+from pathlib import Path
 import shutil
-import stat
-import subprocess
 import tempfile
-import threading
 import time
 from typing import Any, Mapping
-import uuid
 
 from agent_eval_harness.environment import (
     DockerTaskContainer,
     EnvironmentFailure,
-    apply_patch as container_apply_patch,
     build_task_environment,
     prepare_defective_repository,
-    read_file as container_read_file,
     run_canonical_checks,
-    run_shell as container_run_shell,
-    search_text as container_search_text,
 )
 from agent_eval_harness.admission import task_package_evidence
 from agent_eval_harness.model import (
@@ -46,6 +32,37 @@ from agent_eval_harness.model import (
 )
 from agent_eval_harness.paths import orchestration_root
 from agent_eval_harness.report import render_attempt_report
+
+# Stable facade imports: callers and existing experiments keep the attempt.py seam.
+from agent_eval_harness.builtins import apply_patch as container_apply_patch
+from agent_eval_harness.builtins import read_file as container_read_file
+from agent_eval_harness.builtins import run_shell as container_run_shell
+from agent_eval_harness.builtins import search_text as container_search_text
+from agent_eval_harness.context import (
+    _assistant_message, _context_size_bytes, _json_copy, _json_default,
+    _tool_output_for_model,
+)
+from agent_eval_harness.evaluation import (
+    _apply_candidate_changes, _candidate_changes, _candidate_diff,
+    _finalize_evaluation, _materialize_snapshot, _safe_candidate_path,
+    _snapshot_repository, collect_candidate,
+    evaluate_candidate_changes as _evaluate_candidate_changes_impl,
+)
+from agent_eval_harness.loop import (
+    ModelCallDeadlineExceeded, _complete_with_deadline, _request_model_turn,
+    run_python_loop,
+)
+from agent_eval_harness.persistence import (
+    _collect_artifacts, _record, _timestamp,
+)
+from agent_eval_harness.prompt import build_initial_context as _initial_context
+from agent_eval_harness.provenance import (
+    _dependency_versions, _harness_provenance,
+)
+from agent_eval_harness.tools import (
+    TOOL_DEFINITIONS, _classify_tool_result, _dispatch_tool,
+    execute_tool_turn as _execute_tool_turn,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -93,35 +110,6 @@ class AttemptBudgets:
             raise ValueError("evaluation_timeout_seconds must be positive")
         if self.max_graph_steps is not None and self.max_graph_steps < 1:
             raise ValueError("max_graph_steps must be positive")
-
-
-class ModelCallDeadlineExceeded(TimeoutError):
-    """A synchronous provider request did not return before its allocated time."""
-
-
-def _complete_with_deadline(
-    model: ModelAdapter, request: ModelRequest, timeout_seconds: float
-) -> ModelResponse:
-    """Bound a synchronous provider call without making cleanup wait for it."""
-    completed: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
-
-    def invoke() -> None:
-        try:
-            completed.put((True, model.complete(request)))
-        except BaseException as exc:
-            completed.put((False, exc))
-
-    worker = threading.Thread(target=invoke, name="agent-eval-provider-call", daemon=True)
-    worker.start()
-    worker.join(timeout=max(0.0, timeout_seconds))
-    if worker.is_alive():
-        raise ModelCallDeadlineExceeded(
-            "provider request exceeded the remaining attempt deadline"
-        )
-    succeeded, value = completed.get_nowait()
-    if not succeeded:
-        raise value
-    return value
 
 
 @dataclass(frozen=True)
@@ -189,346 +177,6 @@ class AdmittedTask:
         )
 
 
-TOOL_DEFINITIONS: dict[str, dict[str, str]] = {
-    "read_file": {"description": "Read a UTF-8 file from the task repository. Arguments: path."},
-    "search_text": {"description": "Search repository text, case-insensitively. Arguments: query."},
-    "apply_patch": {
-        "description": "Create a file with path/content, or replace one exact old_text match with new_text."
-    },
-    "run_shell": {
-        "description": "Run a shell command from the task repository root. Arguments: command."
-    },
-}
-
-
-def _timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _json_default(value: Any) -> Any:
-    if isinstance(value, Path):
-        return str(value)
-    if hasattr(value, "__dict__"):
-        return value.__dict__
-    return str(value)
-
-
-def _json_copy(value: Any) -> Any:
-    return json.loads(json.dumps(value, ensure_ascii=False, default=_json_default))
-
-
-def _tool_output_for_model(output: str, limit: int) -> tuple[str, bool]:
-    encoded = output.encode("utf-8", errors="replace")
-    if len(encoded) <= limit:
-        return output, False
-    marker = "\n...[output truncated; full output is retained in the attempt trace]"
-    prefix = encoded[:max(0, limit - len(marker.encode()))].decode("utf-8", errors="ignore")
-    return prefix + marker, True
-
-
-def _context_size_bytes(messages: list[dict[str, Any]]) -> int:
-    serialized = json.dumps(messages, ensure_ascii=False, separators=(",", ":"), default=_json_default)
-    return len(serialized.encode("utf-8"))
-
-
-def _harness_provenance() -> dict[str, Any]:
-    """Describe the exact harness checkout used by every orchestration route."""
-    try:
-        commit = subprocess.run(
-            ["git", "-C", str(REPOSITORY_ROOT), "rev-parse", "HEAD"],
-            check=True, capture_output=True, text=True, timeout=5,
-        ).stdout.strip()
-        status = subprocess.run(
-            ["git", "-C", str(REPOSITORY_ROOT), "status", "--porcelain=v1", "-z"],
-            check=True, capture_output=True, timeout=5,
-        ).stdout
-        diff = subprocess.run(
-            ["git", "-C", str(REPOSITORY_ROOT), "diff", "HEAD", "--binary"],
-            check=True, capture_output=True, timeout=5,
-        ).stdout
-        digest = hashlib.sha256(diff)
-        untracked = subprocess.run(
-            ["git", "-C", str(REPOSITORY_ROOT), "ls-files", "--others", "--exclude-standard", "-z"],
-            check=True, capture_output=True, timeout=5,
-        ).stdout
-        for relative in sorted(filter(None, untracked.split(b"\0"))):
-            path = REPOSITORY_ROOT / relative.decode("utf-8", errors="surrogateescape")
-            if path.is_file() and not path.is_symlink():
-                digest.update(relative + b"\0" + path.read_bytes())
-        return {
-            "commit": commit,
-            "working_tree": "dirty" if status else "clean",
-            "working_tree_sha256": digest.hexdigest() if status else None,
-        }
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {
-            "commit": None,
-            "working_tree": "unavailable",
-            "working_tree_sha256": None,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-
-
-def _dependency_versions() -> dict[str, str]:
-    versions = {"python-runtime": platform.python_version()}
-    for distribution in importlib.metadata.distributions():
-        name = distribution.metadata.get("Name")
-        if isinstance(name, str) and name:
-            versions[name.casefold().replace("_", "-")] = distribution.version
-    return dict(sorted(versions.items()))
-
-
-def _initial_context(task: AdmittedTask, task_repository: Path) -> list[dict[str, str]]:
-    public_task = task.public_task_path.read_text(encoding="utf-8")
-    instructions_path = task_repository / "AGENTS.md"
-    instructions = instructions_path.read_text(encoding="utf-8") if instructions_path.is_file() else ""
-    files = sorted(
-        path.relative_to(task_repository).as_posix()
-        for path in task_repository.rglob("*")
-        if path.is_file() and ".git" not in path.relative_to(task_repository).parts
-    )
-    root_files = [path for path in files if "/" not in path]
-    selected = list(root_files[:10])
-    for directory, allowance in (("app/", 30), ("src/", 20), ("tests/", 30)):
-        selected.extend([path for path in files if path.startswith(directory)][:allowance])
-    selected = list(dict.fromkeys(selected))[:100]
-    selected_set = set(selected)
-    remaining = [path for path in files if path not in selected_set]
-    selected.extend(remaining[: max(0, 100 - len(selected))])
-    file_map = "\n".join(f"- {path}" for path in selected)
-    omitted = [path for path in files if path not in set(selected)]
-    if omitted:
-        counts: dict[str, int] = {}
-        for path in omitted:
-            area = path.split("/", 1)[0] if "/" in path else "(root)"
-            counts[area] = counts.get(area, 0) + 1
-        common_areas = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:8]
-        summary = ", ".join(f"{area} ({count})" for area, count in common_areas)
-        file_map += (
-            f"\n- ... and {len(omitted)} more files"
-            f"\nAdditional file counts by area: {summary}"
-        )
-    system = (
-        "You are a coding agent working on a bug-repair task. Use repository tools to inspect, "
-        "edit, and run checks. The task environment contains a writable pinned repository. "
-        "The task repository is the only mounted host directory.\n\n"
-        "Available tools:\n" + "\n".join(
-            f"- {name}: {details['description']}" for name, details in TOOL_DEFINITIONS.items()
-        )
-    )
-    user = (
-        f"Task description:\n{public_task}\n\n"
-        "Repository instructions (AGENTS.md):\n"
-        f"{instructions or '(No AGENTS.md found.)'}\n\n"
-        "Repository file map:\n" + file_map
-    )
-    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
-
-
-def _assistant_message(response: ModelResponse) -> dict[str, Any]:
-    message: dict[str, Any] = {
-        "role": "assistant",
-        "content": response.content,
-        "tool_calls": [
-            {
-                "id": call.call_id,
-                "type": "function",
-                "function": {
-                    "name": call.name,
-                    "arguments": json.dumps(dict(call.arguments), ensure_ascii=False, sort_keys=True),
-                },
-            }
-            for call in response.tool_calls
-        ],
-    }
-    for key, value in response.reasoning_fields.items():
-        if key not in {"role", "content", "tool_calls"}:
-            message[key] = _json_copy(value)
-    return message
-
-
-def _dispatch_tool(
-    container: DockerTaskContainer,
-    call: ToolCall,
-    budgets: AttemptBudgets,
-    timeout_seconds: float,
-) -> dict[str, Any]:
-    args = dict(call.arguments)
-    if call.name == "read_file":
-        if not isinstance(args.get("path"), str):
-            return {"status": "error", "output": "", "error": "path must be text", "exit_code": None}
-        return container_read_file(container, args["path"], timeout=timeout_seconds)
-    if call.name == "search_text":
-        if not isinstance(args.get("query"), str):
-            return {"status": "error", "output": "", "error": "query must be text", "exit_code": None}
-        return container_search_text(container, args["query"], timeout=timeout_seconds)
-    if call.name == "apply_patch":
-        return container_apply_patch(container, args, timeout=timeout_seconds)
-    if call.name == "run_shell":
-        command = args.get("command")
-        if not isinstance(command, str):
-            return {"status": "error", "output": "", "error": "command must be text", "exit_code": None}
-        return container_run_shell(container, command, timeout_seconds)
-    return {"status": "error", "output": "", "error": f"unknown tool: {call.name}", "exit_code": None}
-
-
-def _classify_tool_result(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
-    """Give every tool result a stable, model-readable status and failure category."""
-    normalized = dict(result)
-    if normalized.get("status") == "error":
-        if "error_category" not in normalized:
-            if tool_name == "apply_patch":
-                category = "patch_rejected"
-            elif "timed out" in str(normalized.get("error", "")).casefold():
-                category = "command_timeout"
-            elif tool_name == "run_shell":
-                category = "command_failed"
-            else:
-                category = "tool_failed"
-            normalized["error_category"] = category
-        normalized.setdefault("retryable", False)
-    return normalized
-
-
-def _snapshot_repository(root: Path) -> dict[str, tuple[bytes, int]]:
-    snapshot = {}
-    for path in sorted(root.rglob("*")):
-        if path.is_symlink():
-            raise EnvironmentFailure(f"Cannot collect a candidate containing a symbolic link: {path.relative_to(root)}")
-        if not path.is_file():
-            continue
-        relative = path.relative_to(root).as_posix()
-        if relative == ".git" or relative.startswith(".git/"):
-            continue
-        mode = 0o755 if path.stat().st_mode & stat.S_IXUSR else 0o644
-        snapshot[relative] = (path.read_bytes(), mode)
-    return snapshot
-
-
-def _candidate_changes(
-    baseline: Mapping[str, tuple[bytes, int]], current: Mapping[str, tuple[bytes, int]]
-) -> list[dict[str, Any]]:
-    changes = []
-    for path in sorted(set(baseline) | set(current)):
-        old = baseline.get(path)
-        new = current.get(path)
-        if old == new:
-            continue
-        if new is None:
-            changes.append({"path": path, "action": "delete"})
-        else:
-            changes.append({
-                "path": path,
-                "action": "add" if old is None else "modify",
-                "mode": new[1],
-                "content_base64": base64.b64encode(new[0]).decode("ascii"),
-            })
-    return changes
-
-
-def _candidate_diff(
-    changes: list[dict[str, Any]], baseline: Mapping[str, tuple[bytes, int]]
-) -> str:
-    parts = []
-    for change in changes:
-        path = change["path"]
-        old = baseline.get(path)
-        new = None if change["action"] == "delete" else base64.b64decode(change["content_base64"])
-        old_bytes = old[0] if old else b""
-        try:
-            old_text = old_bytes.decode("utf-8")
-            new_text = new.decode("utf-8") if new is not None else ""
-        except UnicodeDecodeError:
-            parts.append(f"Binary file {path} changed.\n")
-            continue
-        from_name = f"a/{path}" if old is not None else "/dev/null"
-        to_name = f"b/{path}" if new is not None else "/dev/null"
-        diff = difflib.unified_diff(
-            old_text.splitlines(keepends=True),
-            new_text.splitlines(keepends=True),
-            fromfile=from_name,
-            tofile=to_name,
-        )
-        parts.extend(diff)
-    return "".join(parts)
-
-
-def _safe_candidate_path(value: str) -> PurePosixPath:
-    path = PurePosixPath(value)
-    if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
-        raise EnvironmentFailure(f"Invalid candidate path: {value!r}")
-    if path.parts[0] == ".git":
-        raise EnvironmentFailure("Candidate changes cannot contain Git metadata")
-    return path
-
-
-def _apply_candidate_changes(repository: Path, changes: list[dict[str, Any]]) -> None:
-    for change in changes:
-        relative = _safe_candidate_path(change["path"])
-        target = repository.joinpath(*relative.parts)
-        if change["action"] == "delete":
-            if target.is_symlink():
-                raise EnvironmentFailure(f"Cannot delete through a symbolic link: {relative}")
-            if target.exists():
-                target.unlink()
-            continue
-        if any(parent.is_symlink() for parent in [target, *target.parents] if parent != repository.parent):
-            raise EnvironmentFailure(f"Candidate path crosses a symbolic link: {relative}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(base64.b64decode(change["content_base64"]))
-        target.chmod(change.get("mode", 0o644))
-
-
-def _materialize_snapshot(
-    repository: Path, snapshot: Mapping[str, tuple[bytes, int]]
-) -> None:
-    repository.mkdir(parents=True, exist_ok=False)
-    for relative_name, (content, mode) in snapshot.items():
-        relative = _safe_candidate_path(relative_name)
-        target = repository.joinpath(*relative.parts)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
-        target.chmod(mode)
-
-
-def _collect_artifacts(result: dict[str, Any], artifact_directory: Path) -> None:
-    artifact_directory.mkdir(parents=True, exist_ok=True)
-    full_output_directory = artifact_directory / "tool-results"
-    for event in result.get("trace", []):
-        if event.get("type") != "tool" or not isinstance(event.get("result"), dict):
-            continue
-        full_output_directory.mkdir(parents=True, exist_ok=True)
-        relative = f"tool-results/event-{event['event_id']:04d}.txt"
-        output = str(event["result"].get("output", ""))
-        (artifact_directory / relative).write_text(output, encoding="utf-8")
-        event["result"]["output_artifact"] = relative
-    metadata = result.get("metadata", {})
-    (artifact_directory / "metadata.json").write_text(
-        json.dumps(metadata, indent=2, ensure_ascii=False, sort_keys=True, default=_json_default) + "\n",
-        encoding="utf-8",
-    )
-    (artifact_directory / "trace.jsonl").write_text(
-        "".join(json.dumps(event, ensure_ascii=False, sort_keys=True, default=_json_default) + "\n"
-                for event in result.get("trace", [])),
-        encoding="utf-8",
-    )
-    candidate = result.get("candidate", {"changed_files": [], "files": [], "patch": ""})
-    (artifact_directory / "candidate.patch").write_text(candidate.get("patch", ""), encoding="utf-8")
-    (artifact_directory / "candidate-files.json").write_text(
-        json.dumps(candidate.get("files", []), indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    (artifact_directory / "checks.json").write_text(
-        json.dumps(result.get("evaluation", {}), indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    (artifact_directory / "result.json").write_text(
-        json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True, default=_json_default) + "\n",
-        encoding="utf-8",
-    )
-    (artifact_directory / "report.html").write_text(render_attempt_report(result), encoding="utf-8")
-
-
 def _finalize_accounting(
     result: dict[str, Any], model: ModelAdapter, model_call_count: int,
     usage_records: list[dict[str, Any]], trace: list[dict[str, Any]],
@@ -549,86 +197,6 @@ def _finalize_accounting(
                 "error_category": "accounting_snapshot_error",
                 "error": f"{type(exc).__name__}: {exc}",
             }
-
-
-def _finalize_evaluation(
-    result: dict[str, Any], evaluation: dict[str, Any], trace: list[dict[str, Any]]
-) -> None:
-    """Apply the same evaluator-to-verdict mapping on normal and recovery paths."""
-    from agent_eval_harness.admission import CHECK_IDS
-
-    result["evaluation"] = evaluation
-    checks = evaluation.get("checks")
-    if evaluation.get("status") == "invalid_patch":
-        verdict, category = "failure", "invalid_patch"
-    elif (
-        evaluation.get("status") != "completed"
-        or not isinstance(checks, Mapping)
-        or set(checks) != set(CHECK_IDS)
-        or any(type(value) is not bool for value in checks.values())
-    ):
-        verdict, category = "invalid_environment", "evaluation_environment_error"
-    elif evaluation.get("candidate_execution_error"):
-        verdict, category = "failure", "candidate_execution_error"
-    elif all(checks.values()):
-        verdict, category = "success", None
-    else:
-        verdict, category = "failure", "canonical_check_failure"
-    result["functional_verdict"] = verdict
-    result["failure_category"] = category
-    _record(
-        trace,
-        "evaluation",
-        status=evaluation.get("status"),
-        failure_category=category,
-        functional_verdict=verdict,
-        checks=checks if isinstance(checks, Mapping) else {},
-        error=evaluation.get("error"),
-        container_configuration=evaluation.get("container_configuration", {}),
-    )
-
-
-def _evaluate_candidate_changes(
-    defect_repository: Path,
-    changes: list[dict[str, Any]],
-    *,
-    image_id: str,
-    admitted_task: AdmittedTask,
-    timeout_seconds: float,
-) -> dict[str, Any]:
-    """Apply a collected candidate, then run the canonical evaluator.
-
-    Unsafe candidate paths are candidate failures. Failures while staging the
-    evaluator or running its Docker worker are environment errors, so an
-    unavailable canonical result cannot be scored as a repair failure.
-    """
-    try:
-        with tempfile.TemporaryDirectory(prefix="agent-eval-candidate-evaluator-") as scratch:
-            evaluation_repository = Path(scratch) / "task-repository"
-            shutil.copytree(defect_repository, evaluation_repository)
-            try:
-                _apply_candidate_changes(evaluation_repository, changes)
-            except EnvironmentFailure as exc:
-                return {"status": "invalid_patch", "checks": {}, "error": str(exc)}
-            return run_canonical_checks(
-                image_id,
-                evaluation_repository,
-                admitted_task.evaluator_directory,
-                admitted_task.runtime_version,
-                timeout_seconds=timeout_seconds,
-            )
-    except Exception as exc:
-        return {
-            "status": "error",
-            "checks": {},
-            "error": f"Candidate evaluator staging or execution failed: {type(exc).__name__}: {exc}",
-        }
-
-
-def _record(trace: list[dict[str, Any]], event_type: str, **data: Any) -> dict[str, Any]:
-    event = {"event_id": len(trace) + 1, "type": event_type, "timestamp": _timestamp(), **data}
-    trace.append(event)
-    return event
 
 
 def _cost_summary(usage_records: list[dict[str, Any]], trace: list[dict[str, Any]]) -> dict[str, Any]:
@@ -700,257 +268,19 @@ def _observed_models(usage_records: list[dict[str, Any]]) -> list[str]:
     return models
 
 
-def _request_model_turn(
+def _evaluate_candidate_changes(
+    defect_repository: Path,
+    changes: list[dict[str, Any]],
     *,
-    messages: list[dict[str, Any]],
-    model: ModelAdapter,
-    model_config: ModelConfig,
-    budgets: AttemptBudgets,
-    work_deadline: float,
-    trace: list[dict[str, Any]],
-    result: dict[str, Any],
-    usage_records: list[dict[str, Any]],
-    model_call_count: int,
-) -> tuple[ModelResponse | None, int, str | None]:
-    """Run one shared model node, including deadline, context, and retry policy."""
-    if time.monotonic() >= work_deadline:
-        termination = "attempt_deadline"
-        _record(
-            trace, "termination", reason=termination,
-            attempt_deadline_seconds=budgets.attempt_deadline_seconds,
-        )
-        return None, model_call_count, termination
-    if model_call_count >= budgets.max_model_calls:
-        termination = "model_call_budget"
-        _record(trace, "termination", reason=termination, model_calls=model_call_count)
-        return None, model_call_count, termination
-
-    context_bytes = _context_size_bytes(messages)
-    result["metadata"]["context_bytes_at_last_check"] = context_bytes
-    if context_bytes > budgets.max_context_bytes:
-        termination = "context_budget"
-        result["metadata"]["context_bytes_at_stop"] = context_bytes
-        _record(
-            trace, "termination", reason=termination,
-            context_bytes=context_bytes, max_context_bytes=budgets.max_context_bytes,
-        )
-        return None, model_call_count, termination
-
-    request_retry_count = 0
-    response: ModelResponse | None = None
-    request: ModelRequest | None = None
-    call_started = time.monotonic()
-    termination: str | None = None
-    while response is None and termination is None:
-        if time.monotonic() >= work_deadline:
-            termination = "attempt_deadline"
-            _record(trace, "termination", reason=termination, model_calls=model_call_count)
-            break
-        if model_call_count >= budgets.max_model_calls:
-            termination = "model_call_budget"
-            _record(trace, "termination", reason=termination, model_calls=model_call_count)
-            break
-        request = ModelRequest(
-            messages=copy.deepcopy(messages),
-            config=model_config,
-            timeout_seconds=work_deadline - time.monotonic(),
-        )
-        model_call_count += 1
-        call_started = time.monotonic()
-        try:
-            response = _complete_with_deadline(model, request, work_deadline - call_started)
-            if not isinstance(response, ModelResponse):
-                raise TypeError("model adapter must return ModelResponse")
-        except RequestBudgetExceeded as exc:
-            duration = time.monotonic() - call_started
-            snapshotter = getattr(model, "accounting_snapshot", None)
-            try:
-                budget_snapshot = snapshotter() if callable(snapshotter) else None
-            except Exception as snapshot_error:
-                budget_snapshot = {
-                    "status": "unavailable",
-                    "error": f"{type(snapshot_error).__name__}: {snapshot_error}",
-                }
-            _record(
-                trace, "model", model_call=model_call_count, status="budget_stopped",
-                duration_seconds=round(duration, 6), request_messages=request.messages,
-                error=f"{type(exc).__name__}: {exc}", error_category="spending_budget",
-                retrying=False, spend_budget=budget_snapshot,
-            )
-            termination = "spending_budget"
-            _record(trace, "termination", reason=termination, model_calls=model_call_count)
-        except ModelCallDeadlineExceeded as exc:
-            duration = time.monotonic() - call_started
-            _record(
-                trace, "model", model_call=model_call_count, status="timeout",
-                duration_seconds=round(duration, 6), request_messages=request.messages,
-                error=f"{type(exc).__name__}: {exc}", error_category="attempt_deadline",
-            )
-            termination = "attempt_deadline"
-        except KeyboardInterrupt as exc:
-            duration = time.monotonic() - call_started
-            _record(
-                trace, "model", model_call=model_call_count, status="interrupted",
-                duration_seconds=round(duration, 6), request_messages=request.messages,
-                error=f"{type(exc).__name__}: {exc}", error_category="interrupted",
-            )
-            termination = "interrupted"
-        except RetryableProviderError as exc:
-            duration = time.monotonic() - call_started
-            can_retry = (
-                request_retry_count < budgets.max_provider_retries
-                and model_call_count < budgets.max_model_calls
-                and time.monotonic() < work_deadline
-            )
-            delay = min(
-                budgets.provider_retry_delay_seconds,
-                max(0.0, work_deadline - time.monotonic()),
-            ) if can_retry else 0.0
-            _record(
-                trace, "model", model_call=model_call_count, status="error",
-                duration_seconds=round(duration, 6), request_messages=request.messages,
-                error=f"{type(exc).__name__}: {exc}",
-                error_category="retryable_provider_error", retrying=can_retry,
-                retry_number=request_retry_count + 1, retry_delay_seconds=delay,
-            )
-            if not can_retry:
-                termination = (
-                    "model_call_budget"
-                    if model_call_count >= budgets.max_model_calls else "provider_error"
-                )
-                _record(trace, "termination", reason=termination, model_calls=model_call_count)
-                break
-            request_retry_count += 1
-            result["metadata"]["retry_count"] = result["metadata"].get("retry_count", 0) + 1
-            if delay:
-                time.sleep(delay)
-            if time.monotonic() >= work_deadline:
-                termination = "attempt_deadline"
-                _record(trace, "termination", reason=termination, model_calls=model_call_count)
-        except Exception as exc:
-            duration = time.monotonic() - call_started
-            _record(
-                trace, "model", model_call=model_call_count, status="error",
-                duration_seconds=round(duration, 6), request_messages=request.messages,
-                error=f"{type(exc).__name__}: {exc}", error_category="provider_error",
-                retrying=False,
-            )
-            termination = "provider_error"
-            _record(trace, "termination", reason=termination, model_calls=model_call_count)
-
-    if response is None:
-        return None, model_call_count, termination or "provider_error"
-
-    duration = time.monotonic() - call_started
-    usage = _json_copy(dict(response.usage))
-    usage["observed_model"] = response.observed_model
-    usage_records.append(usage)
-    response_payload = {
-        "content": response.content,
-        "reasoning_fields": _json_copy(dict(response.reasoning_fields)),
-        "tool_calls": [
-            {
-                "name": call.name,
-                "arguments": _json_copy(dict(call.arguments)),
-                "call_id": call.call_id,
-            }
-            for call in response.tool_calls
-        ],
-        "usage": usage,
-        "observed_model": response.observed_model,
-    }
-    _record(
-        trace, "model", model_call=model_call_count, status="ok",
-        duration_seconds=round(duration, 6), request_messages=request.messages,
-        response=response_payload,
+    image_id: str,
+    admitted_task: AdmittedTask,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Evaluate a candidate while preserving the historical attempt.py seam."""
+    return _evaluate_candidate_changes_impl(
+        defect_repository, changes, image_id=image_id, admitted_task=admitted_task,
+        timeout_seconds=timeout_seconds, canonical_check_runner=run_canonical_checks,
     )
-    messages.append(_assistant_message(response))
-    if usage.get("provider_finish_reason") == "length":
-        termination = "provider_output_limit"
-        _record(
-            trace, "termination", reason=termination,
-            error_category="provider_output_limit", provider_finish_reason="length",
-            model_calls=model_call_count,
-        )
-        return response, model_call_count, termination
-    if not response.tool_calls:
-        termination = "agent_completed"
-        _record(trace, "termination", reason=termination, model_calls=model_call_count)
-    return response, model_call_count, termination
-
-
-def _execute_tool_turn(
-    *,
-    response: ModelResponse,
-    messages: list[dict[str, Any]],
-    model_call_count: int,
-    container: DockerTaskContainer,
-    budgets: AttemptBudgets,
-    work_deadline: float,
-    trace: list[dict[str, Any]],
-) -> str | None:
-    """Run one ordered tool node and append its bounded outputs to conversation state."""
-    for index, call in enumerate(response.tool_calls, 1):
-        tool_started = time.monotonic()
-        tool_id = call.call_id or f"call-{model_call_count}-{index}"
-        tool_remaining = work_deadline - tool_started
-        default_timeout = float(budgets.shell_timeout_seconds) if call.name == "run_shell" else 30.0
-        if tool_remaining <= 0:
-            tool_result = {
-                "status": "error", "output": "",
-                "error": "Attempt deadline reached before tool execution",
-                "exit_code": None, "error_category": "attempt_deadline", "retryable": False,
-            }
-        else:
-            effective_timeout = min(default_timeout, tool_remaining)
-            try:
-                tool_result = _classify_tool_result(
-                    call.name,
-                    _dispatch_tool(container, call, budgets, effective_timeout),
-                )
-            except Exception as exc:
-                tool_result = {
-                    "status": "error", "output": "",
-                    "error": f"{type(exc).__name__}: {exc}", "exit_code": None,
-                    "error_category": "tool_failed", "retryable": False,
-                }
-            if (
-                time.monotonic() >= work_deadline
-                and tool_result.get("status") == "error"
-                and tool_result.get("error_category") == "command_timeout"
-            ):
-                tool_result["error_category"] = "attempt_deadline"
-                tool_result["error"] = "Attempt deadline expired during tool execution"
-        deadline_hit = time.monotonic() >= work_deadline
-        duration = time.monotonic() - tool_started
-        tool_result["duration_seconds"] = round(duration, 6)
-        visible_output, truncated = _tool_output_for_model(
-            str(tool_result.get("output", "")), budgets.tool_output_limit_bytes
-        )
-        visible = {
-            "status": tool_result.get("status"),
-            "output": visible_output,
-            "error": tool_result.get("error"),
-            "exit_code": tool_result.get("exit_code"),
-            "error_category": tool_result.get("error_category"),
-            "retryable": tool_result.get("retryable", False),
-            "truncated": truncated,
-        }
-        _record(
-            trace, "tool", tool_name=call.name, tool_call_id=tool_id,
-            arguments=_json_copy(dict(call.arguments)), status=tool_result.get("status"),
-            duration_seconds=round(duration, 6), result=tool_result,
-            model_visible_result=visible,
-        )
-        messages.append({
-            "role": "tool", "tool_call_id": tool_id, "name": call.name,
-            "content": json.dumps(visible, ensure_ascii=False, sort_keys=True),
-        })
-        if deadline_hit:
-            termination = "attempt_deadline"
-            _record(trace, "termination", reason=termination, model_calls=model_call_count)
-            return termination
-    return None
 
 
 def attempt_and_evaluate(
@@ -1155,9 +485,11 @@ def attempt_and_evaluate(
                         model_calls=model_call_count,
                     )
             else:
-                while termination == "harness_error":
-                    response, model_call_count, stop_reason = _request_model_turn(
-                        messages=messages,
+                def request_python_turn(
+                    current_messages: list[dict[str, Any]], current_count: int
+                ) -> tuple[ModelResponse | None, int, str | None]:
+                    return _request_model_turn(
+                        messages=current_messages,
                         model=model,
                         model_config=model_config,
                         budgets=budgets,
@@ -1165,25 +497,29 @@ def attempt_and_evaluate(
                         trace=trace,
                         result=result,
                         usage_records=usage_records,
-                        model_call_count=model_call_count,
+                        model_call_count=current_count,
                     )
-                    if stop_reason is not None:
-                        termination = stop_reason
-                        break
-                    if response is None:
-                        termination = "provider_error"
-                        break
-                    stop_reason = _execute_tool_turn(
+
+                def execute_python_turn(
+                    response: ModelResponse,
+                    current_messages: list[dict[str, Any]],
+                    current_count: int,
+                ) -> str | None:
+                    return _execute_tool_turn(
                         response=response,
-                        messages=messages,
-                        model_call_count=model_call_count,
+                        messages=current_messages,
+                        model_call_count=current_count,
                         container=attempt_container,
                         budgets=budgets,
                         work_deadline=work_deadline,
                         trace=trace,
                     )
-                    if stop_reason is not None:
-                        termination = stop_reason
+
+                termination, model_call_count = run_python_loop(
+                    messages,
+                    request_model=request_python_turn,
+                    execute_tools=execute_python_turn,
+                )
 
             result["termination_reason"] = termination
             result["attempt_container_configuration"] = attempt_container.configuration
@@ -1198,15 +534,8 @@ def attempt_and_evaluate(
             )
 
             try:
-                current = _snapshot_repository(task_repository)
-                changes = _candidate_changes(defect_baseline, current)
-                patch_text = _candidate_diff(changes, defect_baseline)
-                result["candidate"] = {
-                    "status": "collected",
-                    "changed_files": [change["path"] for change in changes],
-                    "files": changes,
-                    "patch": patch_text,
-                }
+                result["candidate"] = collect_candidate(task_repository, defect_baseline)
+                changes = result["candidate"]["files"]
             except EnvironmentFailure as exc:
                 changes = []
                 result["candidate"] = {
@@ -1293,14 +622,8 @@ def attempt_and_evaluate(
             and defect_baseline
         ):
             try:
-                current = _snapshot_repository(task_repository)
-                changes = _candidate_changes(defect_baseline, current)
-                result["candidate"] = {
-                    "status": "collected",
-                    "changed_files": [change["path"] for change in changes],
-                    "files": changes,
-                    "patch": _candidate_diff(changes, defect_baseline),
-                }
+                result["candidate"] = collect_candidate(task_repository, defect_baseline)
+                changes = result["candidate"]["files"]
                 _record(
                     trace, "patch_collection", status="completed_during_cleanup",
                     changed_files=result["candidate"]["changed_files"],
