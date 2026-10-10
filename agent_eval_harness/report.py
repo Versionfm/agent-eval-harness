@@ -72,6 +72,21 @@ def _artifact_href(value: Any) -> str | None:
     return html.escape(quote(path.as_posix(), safe="/"), quote=True)
 
 
+def _recording_label(recording: Any) -> str:
+    """Recording completeness, kept apart from the termination reason and the verdict."""
+    if not isinstance(recording, dict):
+        return "not observed (no attempt event log)"
+    status = str(recording.get("status", "unknown"))
+    error = recording.get("error")
+    return f"{status}: {error}" if error else status
+
+
+def _review_label(review: Any) -> str:
+    if isinstance(review, dict) and review.get("status") == "completed":
+        return f"Qualitative review completed by {review.get('reviewer')} at {review.get('reviewed_at')}"
+    return "Qualitative review pending"
+
+
 def render_attempt_report(result: dict[str, Any]) -> str:
     metadata = result.get("metadata", {})
     verdict = str(result.get("functional_verdict", "invalid_environment"))
@@ -249,7 +264,8 @@ def render_attempt_report(result: dict[str, Any]) -> str:
         "Reported charge": _money_label(reported_cost, label="Reported charge"),
         "Estimated cost": _money_label(estimated_cost, label="Estimated cost"),
         "USD spending ceiling": spend_label,
-        "Qualitative review": "Qualitative review pending",
+        "Recording": _recording_label(result.get("recording")),
+        "Qualitative review": _review_label(metadata.get("qualitative_review")),
     }
     rows = "".join(
         f"<dt>{html.escape(str(key))}</dt><dd>{html.escape(str(value))}</dd>"
@@ -295,6 +311,6 @@ def render_attempt_report(result: dict[str, Any]) -> str:
   <h2>Attempt timeline</h2>{event_html}
   <h2 id="candidate-diff">Candidate patch</h2><pre>{html.escape(diff)}</pre>
   <h2 id="canonical-checks">Fresh canonical evaluation</h2>{check_table}
-  <p>{html.escape(cost_fallback)} Qualitative review pending.</p>
+  <p>{html.escape(cost_fallback)} {html.escape(_review_label(metadata.get("qualitative_review")))}.</p>
 </main></body></html>
 """
