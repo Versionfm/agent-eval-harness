@@ -1,6 +1,6 @@
 import unittest
 
-from agent_eval_harness.report import render_attempt_report
+from agent_eval_harness.reports.report import render_attempt_report
 
 
 class AttemptCostReportTests(unittest.TestCase):

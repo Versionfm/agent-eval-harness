@@ -8,12 +8,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agent_eval_harness.attempt import (
+from agent_eval_harness.bench.attempt import (
     AdmittedTask,
     AttemptBudgets,
     attempt_and_evaluate,
 )
-from agent_eval_harness.model import (
+from agent_eval_harness.harness.model import (
     ModelConfig,
     ModelResponse,
     RequestBudgetExceeded,

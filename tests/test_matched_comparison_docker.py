@@ -8,9 +8,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agent_eval_harness.attempt import DEFAULT_TASK_PACKAGE
-from agent_eval_harness.deepseek import HttpResponse
-from agent_eval_harness.run_matched_comparison import (
+from agent_eval_harness.bench.attempt import DEFAULT_TASK_PACKAGE
+from agent_eval_harness.harness.deepseek import HttpResponse
+from agent_eval_harness.cli.run_matched_comparison import (
     DEFAULT_PARITY_EVIDENCE,
     run_matched_comparison,
 )

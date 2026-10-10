@@ -8,12 +8,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_eval_harness.attempt import _evaluate_candidate_changes, _finalize_evaluation
-from agent_eval_harness.environment import (
-    CommandTimeout,
-    EnvironmentFailure,
-    run_canonical_checks,
-)
+from agent_eval_harness.bench.attempt import _evaluate_candidate_changes, _finalize_evaluation
+from agent_eval_harness.bench.environment import run_canonical_checks
+from agent_eval_harness.harness.permissions import CommandTimeout, EnvironmentFailure
 from tasks.ml_tutor_retrieval.curator.checks import CHECK_IDS, evaluate_observations
 
 
@@ -46,12 +43,12 @@ class EvaluatorFailureClassificationTests(unittest.TestCase):
 
     def test_worker_start_timeout_is_an_environment_error(self):
         with patch(
-            "agent_eval_harness.environment.DockerTaskContainer.start",
+            "agent_eval_harness.harness.permissions.DockerTaskContainer.start",
             side_effect=CommandTimeout(
                 "docker start timed out", timeout_seconds=1
             ),
         ) as start, patch(
-            "agent_eval_harness.environment.DockerTaskContainer.exec"
+            "agent_eval_harness.harness.permissions.DockerTaskContainer.exec"
         ) as execute:
             result = run_canonical_checks(
                 "fixture-image",
@@ -69,9 +66,9 @@ class EvaluatorFailureClassificationTests(unittest.TestCase):
 
     def test_worker_execution_timeout_is_a_candidate_repair_failure(self):
         with patch(
-            "agent_eval_harness.environment.DockerTaskContainer.start"
+            "agent_eval_harness.harness.permissions.DockerTaskContainer.start"
         ) as start, patch(
-            "agent_eval_harness.environment.DockerTaskContainer.exec",
+            "agent_eval_harness.harness.permissions.DockerTaskContainer.exec",
             side_effect=CommandTimeout(
                 "candidate probe timed out", stdout="partial output",
                 timeout_seconds=2,
@@ -118,7 +115,7 @@ class EvaluatorFailureClassificationTests(unittest.TestCase):
             defect.mkdir()
             (defect / "source.py").write_text("def retrieve(): pass\n", encoding="utf-8")
             with patch(
-                "agent_eval_harness.attempt.run_canonical_checks",
+                "agent_eval_harness.bench.attempt.run_canonical_checks",
                 side_effect=EnvironmentFailure("Docker evaluator unavailable"),
             ):
                 result = _evaluate_candidate_changes(

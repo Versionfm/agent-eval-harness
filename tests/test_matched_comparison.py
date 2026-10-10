@@ -8,14 +8,14 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agent_eval_harness.admission import task_package_evidence
-from agent_eval_harness.attempt import (
+from agent_eval_harness.bench.admission import task_package_evidence
+from agent_eval_harness.bench.attempt import (
     DEFAULT_TASK_PACKAGE,
     _dependency_versions,
     _harness_provenance,
 )
-from agent_eval_harness.deepseek import HttpResponse
-from agent_eval_harness.run_matched_comparison import (
+from agent_eval_harness.harness.deepseek import HttpResponse
+from agent_eval_harness.cli.run_matched_comparison import (
     _attempt_is_measurement,
     _configuration_matches,
     run_matched_comparison,
