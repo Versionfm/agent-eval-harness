@@ -13,6 +13,7 @@ interface NodeLayout {
   x: number;
   y: number;
   w: number;
+  h: number;
 }
 
 interface EdgeLayout {
@@ -21,7 +22,7 @@ interface EdgeLayout {
   lines: string[];
   lx: number;
   ly: number;
-  anchor: "start" | "end";
+  anchor: "start" | "middle" | "end";
 }
 
 interface Layout {
@@ -31,62 +32,117 @@ interface Layout {
   edges: EdgeLayout[];
 }
 
-// The main flow is centred on x=105; the right column holds the side node (tool execution in the LangGraph
-// flow, repository capture in the Python flow). Rows are 72 apart: 40-high boxes with 32-high gaps for labels.
-const MAIN = { x: 30, w: 150 };
-const SIDE = { x: 208, w: 104 };
-const ROW = (row: number) => row * 72;
+// Two geometries per flow, drawn at their natural pixel size (no scaling): `wide` is the full-width band on
+// desktop, read left to right; `tall` is the phone column. Titles are 13px and sub-labels 11px in both.
+// Node order and edge order are the same in both, so the DOM and the tests read the same flow.
 
-const LAYOUTS: Record<Flow, Layout> = {
-  "python-loop": {
-    width: 320,
-    height: 408,
-    nodes: [
-      { id: "attempt", label: "Attempt lifecycle", name: "Attempt lifecycle", x: MAIN.x, y: ROW(0), w: MAIN.w },
-      { id: "model-request", label: "Model request", name: "Model request", x: MAIN.x, y: ROW(1), w: MAIN.w },
-      { id: "tool-execution", label: "Tool execution", name: "Tool execution", x: MAIN.x, y: ROW(2), w: MAIN.w },
-      { id: "repository-capture", label: "Repo capture", name: "Repository capture", x: SIDE.x, y: ROW(2), w: SIDE.w },
-      { id: "candidate", label: "Candidate collection", name: "Candidate collection", x: MAIN.x, y: ROW(3), w: MAIN.w },
-      { id: "checks", label: "Independent checks", name: "Independent checks", x: MAIN.x, y: ROW(4), w: MAIN.w },
-      { id: "finish", label: "Finish", name: "Finish", x: MAIN.x, y: ROW(5), w: MAIN.w },
-    ],
-    edges: [
-      { id: "start-model", d: "M105,40 V72", lines: ["model request"], lx: 113, ly: 60, anchor: "start" },
-      { id: "model-tool", d: "M85,112 V144", lines: ["tool calls"], lx: 79, ly: 131, anchor: "end" },
-      { id: "tool-model", d: "M125,144 V112", lines: ["tool results"], lx: 131, ly: 131, anchor: "start" },
-      { id: "tool-capture", d: "M180,164 H208", lines: [], lx: 0, ly: 0, anchor: "start" },
-      // Stop edge: left of the column, then into candidate collection. Its second line is the recorded reason.
-      { id: "model-candidate", d: "M30,92 H16 V236 H30", lines: ["on stop", ""], lx: 208, ly: 204, anchor: "start" },
-      { id: "candidate-checks", d: "M105,256 V288", lines: [], lx: 0, ly: 0, anchor: "start" },
-      { id: "checks-finish", d: "M105,328 V360", lines: [], lx: 0, ly: 0, anchor: "start" },
-    ],
-  },
-  langgraph: {
-    width: 320,
-    height: 480,
-    nodes: [
-      { id: "attempt", label: "START", name: "Attempt lifecycle", x: MAIN.x, y: ROW(0), w: MAIN.w },
-      { id: "model-request", label: "Model request", name: "Model request", x: MAIN.x, y: ROW(1), w: MAIN.w },
-      { id: "graph-router", label: "LangGraph router", name: "LangGraph router", x: MAIN.x, y: ROW(2), w: MAIN.w },
-      { id: "tool-execution", label: "Tool execution", name: "Tool execution", x: SIDE.x, y: ROW(2), w: SIDE.w },
-      { id: "graph-end", label: "END", name: "LangGraph END", x: MAIN.x, y: ROW(3), w: MAIN.w },
-      { id: "candidate", label: "Candidate collection", name: "Candidate collection", x: MAIN.x, y: ROW(4), w: MAIN.w },
-      { id: "checks", label: "Independent checks", name: "Independent checks", x: MAIN.x, y: ROW(5), w: MAIN.w },
-      { id: "finish", label: "Finish", name: "Finish", x: MAIN.x, y: ROW(6), w: MAIN.w },
-    ],
-    edges: [
-      { id: "start-model", d: "M105,40 V72", lines: ["model request"], lx: 113, ly: 60, anchor: "start" },
-      { id: "model-router", d: "M105,112 V144", lines: ["after model"], lx: 113, ly: 131, anchor: "start" },
-      // Router back to the model node after a tool turn, down the left side of the column.
-      { id: "router-model", d: "M30,164 H16 V92 H30", lines: ["tool_results"], lx: 99, ly: 131, anchor: "end" },
-      { id: "router-tool", d: "M180,156 H208", lines: ["tool_calls"], lx: 196, ly: 138, anchor: "start" },
-      { id: "tool-router", d: "M208,172 H180", lines: ["after tool"], lx: 196, ly: 200, anchor: "start" },
-      { id: "router-end", d: "M105,184 V216", lines: ["end"], lx: 113, ly: 204, anchor: "start" },
-      { id: "end-candidate", d: "M105,256 V288", lines: [], lx: 0, ly: 0, anchor: "start" },
-      { id: "candidate-checks", d: "M105,328 V360", lines: [], lx: 0, ly: 0, anchor: "start" },
-      { id: "checks-finish", d: "M105,400 V432", lines: [], lx: 0, ly: 0, anchor: "start" },
-    ],
-  },
+const WIDE_PYTHON: Layout = {
+  width: 1208,
+  height: 268,
+  nodes: [
+    { id: "attempt", label: "Attempt lifecycle", name: "Attempt lifecycle", x: 0, y: 100, w: 150, h: 56 },
+    { id: "model-request", label: "Model request", name: "Model request", x: 206, y: 100, w: 150, h: 56 },
+    { id: "tool-execution", label: "Tool execution", name: "Tool execution", x: 440, y: 100, w: 150, h: 56 },
+    { id: "repository-capture", label: "Repo capture", name: "Repository capture", x: 440, y: 204, w: 150, h: 56 },
+    { id: "candidate", label: "Candidate collection", name: "Candidate collection", x: 646, y: 100, w: 150, h: 56 },
+    { id: "checks", label: "Independent checks", name: "Independent checks", x: 852, y: 100, w: 150, h: 56 },
+    { id: "finish", label: "Finish", name: "Finish", x: 1058, y: 100, w: 150, h: 56 },
+  ],
+  edges: [
+    { id: "start-model", d: "M150,128 H206", lines: ["model request"], lx: 178, ly: 88, anchor: "middle" },
+    // Forward turn straight across the gap; the loop-back curves below the row, away from the capture node.
+    { id: "model-tool", d: "M356,128 H440", lines: ["tool calls"], lx: 398, ly: 118, anchor: "middle" },
+    { id: "tool-model", d: "M470,156 C452,186 356,186 338,156", lines: ["tool results"], lx: 404, ly: 194, anchor: "middle" },
+    { id: "tool-capture", d: "M515,156 V204", lines: [], lx: 0, ly: 0, anchor: "start" },
+    // The stop edge arcs above the tool node into candidate collection. Its lines are the stop and the reason.
+    { id: "model-candidate", d: "M281,100 C281,40 721,40 721,100", lines: ["on stop", ""], lx: 501, ly: 30, anchor: "middle" },
+    { id: "candidate-checks", d: "M796,128 H852", lines: [], lx: 0, ly: 0, anchor: "start" },
+    { id: "checks-finish", d: "M1002,128 H1058", lines: [], lx: 0, ly: 0, anchor: "start" },
+  ],
+};
+
+const WIDE_LANGGRAPH: Layout = {
+  width: 1242,
+  height: 276,
+  nodes: [
+    { id: "attempt", label: "START", name: "Attempt lifecycle", x: 0, y: 100, w: 150, h: 56 },
+    { id: "model-request", label: "Model request", name: "Model request", x: 182, y: 100, w: 150, h: 56 },
+    { id: "graph-router", label: "LangGraph router", name: "LangGraph router", x: 364, y: 100, w: 150, h: 56 },
+    { id: "tool-execution", label: "Tool execution", name: "Tool execution", x: 364, y: 212, w: 150, h: 56 },
+    { id: "graph-end", label: "END", name: "LangGraph END", x: 546, y: 100, w: 150, h: 56 },
+    { id: "candidate", label: "Candidate collection", name: "Candidate collection", x: 728, y: 100, w: 150, h: 56 },
+    { id: "checks", label: "Independent checks", name: "Independent checks", x: 910, y: 100, w: 150, h: 56 },
+    { id: "finish", label: "Finish", name: "Finish", x: 1092, y: 100, w: 150, h: 56 },
+  ],
+  edges: [
+    { id: "start-model", d: "M150,128 H182", lines: ["model request"], lx: 166, ly: 88, anchor: "middle" },
+    { id: "model-router", d: "M332,128 H364", lines: ["after model"], lx: 348, ly: 88, anchor: "middle" },
+    // The router loops with the tool node below it: down for tool_calls, back up for after tool, and the
+    // tool_results edge returns to the model node below the row.
+    { id: "router-model", d: "M380,156 C360,186 280,186 262,156", lines: ["tool_results"], lx: 330, ly: 194, anchor: "end" },
+    { id: "router-tool", d: "M400,156 V212", lines: ["tool_calls"], lx: 394, ly: 190, anchor: "end" },
+    { id: "tool-router", d: "M480,212 V156", lines: ["after tool"], lx: 486, ly: 190, anchor: "start" },
+    { id: "router-end", d: "M514,128 H546", lines: ["end"], lx: 530, ly: 88, anchor: "middle" },
+    { id: "end-candidate", d: "M696,128 H728", lines: [], lx: 0, ly: 0, anchor: "start" },
+    { id: "candidate-checks", d: "M878,128 H910", lines: [], lx: 0, ly: 0, anchor: "start" },
+    { id: "checks-finish", d: "M1060,128 H1092", lines: [], lx: 0, ly: 0, anchor: "start" },
+  ],
+};
+
+const TALL_PYTHON: Layout = {
+  width: 340,
+  height: 484,
+  nodes: [
+    { id: "attempt", label: "Attempt lifecycle", name: "Attempt lifecycle", x: 28, y: 0, w: 180, h: 56 },
+    { id: "model-request", label: "Model request", name: "Model request", x: 28, y: 84, w: 180, h: 56 },
+    { id: "tool-execution", label: "Tool execution", name: "Tool execution", x: 28, y: 168, w: 180, h: 56 },
+    { id: "repository-capture", label: "Repo capture", name: "Repository capture", x: 236, y: 168, w: 98, h: 56 },
+    { id: "candidate", label: "Candidate collection", name: "Candidate collection", x: 28, y: 252, w: 180, h: 56 },
+    { id: "checks", label: "Independent checks", name: "Independent checks", x: 28, y: 336, w: 180, h: 56 },
+    { id: "finish", label: "Finish", name: "Finish", x: 28, y: 420, w: 180, h: 56 },
+  ],
+  edges: [
+    { id: "start-model", d: "M118,56 V84", lines: ["model request"], lx: 126, ly: 74, anchor: "start" },
+    { id: "model-tool", d: "M98,140 V168", lines: ["tool calls"], lx: 92, ly: 158, anchor: "end" },
+    { id: "tool-model", d: "M138,168 V140", lines: ["tool results"], lx: 144, ly: 158, anchor: "start" },
+    { id: "tool-capture", d: "M208,196 H236", lines: [], lx: 0, ly: 0, anchor: "start" },
+    // Stop edge: left of the column, then into candidate collection. Its second line is the recorded reason.
+    { id: "model-candidate", d: "M28,112 H12 V280 H28", lines: ["on stop", ""], lx: 244, ly: 262, anchor: "start" },
+    { id: "candidate-checks", d: "M118,308 V336", lines: [], lx: 0, ly: 0, anchor: "start" },
+    { id: "checks-finish", d: "M118,392 V420", lines: [], lx: 0, ly: 0, anchor: "start" },
+  ],
+};
+
+const TALL_LANGGRAPH: Layout = {
+  width: 340,
+  height: 568,
+  nodes: [
+    { id: "attempt", label: "START", name: "Attempt lifecycle", x: 28, y: 0, w: 180, h: 56 },
+    { id: "model-request", label: "Model request", name: "Model request", x: 28, y: 84, w: 180, h: 56 },
+    { id: "graph-router", label: "LangGraph router", name: "LangGraph router", x: 28, y: 168, w: 180, h: 56 },
+    { id: "tool-execution", label: "Tool execution", name: "Tool execution", x: 236, y: 168, w: 98, h: 56 },
+    { id: "graph-end", label: "END", name: "LangGraph END", x: 28, y: 252, w: 180, h: 56 },
+    { id: "candidate", label: "Candidate collection", name: "Candidate collection", x: 28, y: 336, w: 180, h: 56 },
+    { id: "checks", label: "Independent checks", name: "Independent checks", x: 28, y: 420, w: 180, h: 56 },
+    { id: "finish", label: "Finish", name: "Finish", x: 28, y: 504, w: 180, h: 56 },
+  ],
+  edges: [
+    { id: "start-model", d: "M118,56 V84", lines: ["model request"], lx: 126, ly: 74, anchor: "start" },
+    { id: "model-router", d: "M118,140 V168", lines: ["after model"], lx: 126, ly: 158, anchor: "start" },
+    // Router back to the model node after a tool turn, down the left side of the column.
+    { id: "router-model", d: "M28,196 H12 V112 H28", lines: ["tool_results"], lx: 110, ly: 158, anchor: "end" },
+    { id: "router-tool", d: "M208,180 H236", lines: ["tool_calls"], lx: 236, ly: 160, anchor: "start" },
+    { id: "tool-router", d: "M236,212 H208", lines: ["after tool"], lx: 236, ly: 240, anchor: "start" },
+    { id: "router-end", d: "M118,224 V252", lines: ["end"], lx: 126, ly: 242, anchor: "start" },
+    { id: "end-candidate", d: "M118,308 V336", lines: [], lx: 0, ly: 0, anchor: "start" },
+    { id: "candidate-checks", d: "M118,392 V420", lines: [], lx: 0, ly: 0, anchor: "start" },
+    { id: "checks-finish", d: "M118,476 V504", lines: [], lx: 0, ly: 0, anchor: "start" },
+  ],
+};
+
+const LAYOUTS: Record<Flow, { wide: Layout; tall: Layout }> = {
+  "python-loop": { wide: WIDE_PYTHON, tall: TALL_PYTHON },
+  langgraph: { wide: WIDE_LANGGRAPH, tall: TALL_LANGGRAPH },
 };
 
 export interface NodeState {
@@ -113,7 +169,7 @@ export interface EdgeState {
   lines: string[];
   lx: number;
   ly: number;
-  anchor: "start" | "end";
+  anchor: "start" | "middle" | "end";
 }
 
 export interface WorkflowState {
@@ -146,9 +202,11 @@ interface Route {
   reason: string;
 }
 
-export function computeWorkflow(events: TrackerEvent[], selectedIndex: number, stopped: boolean): WorkflowState {
+export function computeWorkflow(
+  events: TrackerEvent[], selectedIndex: number, stopped: boolean, wide: boolean,
+): WorkflowState {
   const { flow, legacy } = flowOf(events);
-  const layout = LAYOUTS[flow];
+  const layout = LAYOUTS[flow][wide ? "wide" : "tall"];
   const visible = selectedIndex >= 0 ? events.slice(0, selectedIndex + 1) : [];
   const selected = visible[visible.length - 1];
   const active = selected !== undefined ? componentsOf(selected)[0] ?? null : null;
@@ -188,7 +246,7 @@ export function computeWorkflow(events: TrackerEvent[], selectedIndex: number, s
       x: node.x,
       y: node.y,
       w: node.w,
-      h: 40,
+      h: node.h,
       status,
       waiting: isWaiting,
       unresolved: isUnresolved,
@@ -217,7 +275,7 @@ export function computeWorkflow(events: TrackerEvent[], selectedIndex: number, s
       case "model-candidate": {
         traversed = (counts.get("candidate") ?? 0) > 0;
         const reason = terminationReason(visible);
-        lines[1] = reason ?? "reason not yet recorded";
+        lines[1] = reason ?? "not yet recorded";
         break;
       }
       case "end-candidate":

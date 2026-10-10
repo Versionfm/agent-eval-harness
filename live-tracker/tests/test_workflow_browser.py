@@ -155,7 +155,10 @@ class WorkflowMapBrowserTests(unittest.TestCase):
 
         page.click('#components g.wf-node[data-component="model-request"]')
         self.assertEqual(self.match_rows(page), [3, 4, 5, 6, 12, 13, 14, 15])
-        self.assertIn("agent_eval_harness.loop:_request_model_turn", page.inner_text("#inspector"))
+        page.wait_for_function(
+            "document.querySelector('#inspector').innerText.includes('agent_eval_harness.loop:_request_model_turn')",
+            timeout=20_000,
+        )
 
         page.focus('#components g.wf-node[data-component="tool-execution"]')
         page.keyboard.press("Enter")
