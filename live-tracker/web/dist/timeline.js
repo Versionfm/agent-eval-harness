@@ -1,10 +1,11 @@
-// Minimal timeline client: one attempt, rendered from the saved history plus SSE.
+// Minimal timeline client: one attempt, rendered from the SSE stream (history, then live).
 // Evidence is written with textContent only; links are built from validated paths.
+import { follow } from "./connection.js";
 const ARTIFACT_PATH = /^artifacts\/[0-9a-f]{64}$/;
 const timeline = document.getElementById("timeline");
 const status = document.getElementById("status");
-let attemptId = "";
-let lastSequence = 0;
+const detail = document.getElementById("detail");
+const lag = document.getElementById("lag");
 function describe(event) {
     const data = event.data;
     switch (event.type) {
@@ -26,19 +27,16 @@ function describe(event) {
             return event.type;
     }
 }
-function render(event) {
-    if (event.sequence <= lastSequence) {
-        return; // duplicate from reconnect or history overlap
-    }
-    if (lastSequence > 0 && event.sequence > lastSequence + 1) {
-        const gap = document.createElement("li");
-        gap.className = "gap";
-        gap.textContent = `missing events ${lastSequence + 1} to ${event.sequence - 1}`;
-        timeline.append(gap);
-    }
-    lastSequence = event.sequence;
+function addGap(from, to) {
+    const gap = document.createElement("li");
+    gap.className = "gap";
+    gap.textContent = `missing events ${from} to ${to}`;
+    timeline.append(gap);
+}
+function renderEvent(attemptId, event) {
     const row = document.createElement("li");
     row.dataset.type = event.type;
+    row.dataset.sequence = String(event.sequence);
     const sequence = document.createElement("span");
     sequence.className = "sequence";
     sequence.textContent = `#${event.sequence}`;
@@ -64,26 +62,28 @@ function render(event) {
     }
     timeline.append(row);
 }
-function follow() {
-    const source = new EventSource(`/api/attempts/${encodeURIComponent(attemptId)}/stream?after=${lastSequence}`);
-    source.onopen = () => {
-        status.textContent = "live";
-    };
-    source.addEventListener("attempt-event", (message) => {
-        const event = JSON.parse(message.data);
-        render(event);
-        if (event.type === "attempt_finished") {
-            source.close();
-            status.textContent = "finished";
-        }
-    });
-    source.addEventListener("recording-error", () => {
-        source.close();
-        status.textContent = "recording error: evidence is incomplete";
-    });
-    source.onerror = () => {
-        status.textContent = source.readyState === EventSource.CLOSED ? "closed" : "reconnecting";
-    };
+function onAccepted(attemptId, event, accepted) {
+    if (accepted.kind === "duplicate") {
+        return; // redelivered after a reconnect: already displayed
+    }
+    if (accepted.kind === "conflict") {
+        const row = document.createElement("li");
+        row.className = "conflict";
+        row.textContent = `evidence conflict: ${accepted.message}`;
+        timeline.append(row);
+        return;
+    }
+    if (accepted.gap) {
+        addGap(accepted.gap[0], accepted.gap[1]);
+    }
+    renderEvent(attemptId, event);
+}
+function onProgress(progress) {
+    status.textContent = progress.state;
+    status.dataset.state = progress.state;
+    detail.textContent = progress.detail;
+    const behind = Math.max(progress.latest - progress.displayed, 0);
+    lag.textContent = `displayed #${progress.displayed} · latest #${progress.latest} · lag ${behind}`;
 }
 async function start() {
     const attempts = (await (await fetch("/api/attempts")).json());
@@ -91,16 +91,12 @@ async function start() {
         status.textContent = "no attempts registered";
         return;
     }
-    attemptId = attempts[0].attempt_id;
-    const history = (await (await fetch(`/api/attempts/${encodeURIComponent(attemptId)}/events?after=0`)).json());
-    history.events.forEach(render);
-    if (history.events.some((event) => event.type === "attempt_finished")) {
-        status.textContent = "finished";
-        return;
-    }
-    follow();
+    const attemptId = attempts[0].attempt_id;
+    follow(attemptId, {
+        onAccepted: (event, accepted) => onAccepted(attemptId, event, accepted),
+        onProgress,
+    });
 }
 start().catch((error) => {
     status.textContent = `failed to load timeline: ${String(error)}`;
 });
-export {};
