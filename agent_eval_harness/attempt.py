@@ -7,6 +7,7 @@ import copy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import difflib
+import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import queue
@@ -39,13 +40,15 @@ from agent_eval_harness.model import (
     ScriptedModel,
     ToolCall,
 )
+from agent_eval_harness.paths import orchestration_root
 from agent_eval_harness.report import render_attempt_report
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+ORCHESTRATION_ROOT = orchestration_root(REPOSITORY_ROOT)
 DEFAULT_TASK_PACKAGE = REPOSITORY_ROOT / "tasks" / "ml_tutor_retrieval"
 DEFAULT_ADMISSION_EVIDENCE = (
-    REPOSITORY_ROOT.parents[1] / "orchestration" / "evidence" / "issue-2" / "admission.json"
+    ORCHESTRATION_ROOT / "evidence" / "issue-2" / "admission.json"
 )
 DEFAULT_SOURCE_REPOSITORY = Path("/home/francisco/prompt-engineering-group-project")
 
@@ -223,6 +226,7 @@ def _initial_context(task: AdmittedTask, task_repository: Path) -> list[dict[str
         for path in task_repository.rglob("*")
         if path.is_file() and ".git" not in path.relative_to(task_repository).parts
     )
+
     file_map = "\n".join(f"- {path}" for path in files[:100])
     if len(files) > 100:
         file_map += f"\n- ... and {len(files) - 100} more tracked files"
@@ -878,6 +882,14 @@ def attempt_and_evaluate(
 
             messages = _initial_context(admitted_task, task_repository)
             result["initial_context"] = copy.deepcopy(messages)
+            result["metadata"]["initial_context_sha256"] = hashlib.sha256(
+                json.dumps(
+                    messages,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
             _record(
                 trace,
                 "initial_context",
