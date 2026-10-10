@@ -1,13 +1,15 @@
 // Workbench entry point (layout A): component map, chronological timeline and inspector.
-// The saved history plus SSE feed one attempt. Evidence is written with textContent only.
+// The saved history plus SSE feed one attempt (connection.ts owns delivery). Evidence is written with textContent only.
 import { buildComponentMap, updateComponentCounts } from "./components.js";
+import { follow } from "./connection.js";
 import { el } from "./dom.js";
 import { Inspector } from "./inspector.js";
 import { COMPONENTS, componentOf } from "./model.js";
 const timeline = document.getElementById("timeline");
 const status = document.getElementById("status");
+const detail = document.getElementById("detail");
+const lag = document.getElementById("lag");
 const components = document.getElementById("components");
-let attemptId = "";
 let inspector;
 const events = [];
 const rows = new Map();
@@ -53,20 +55,36 @@ function buildRow(event) {
     row.append(button);
     return row;
 }
-function render(event) {
-    if (event.sequence <= lastSequence) {
-        return; // duplicate from reconnect or history overlap
+// Only accepted events reach the timeline: duplicates are dropped by the ledger, gaps and conflicts are explicit rows.
+function onAccepted(event, accepted) {
+    if (accepted.kind === "duplicate") {
+        return;
     }
-    if (lastSequence > 0 && event.sequence > lastSequence + 1) {
-        const gap = el("li", "gap", `missing events ${lastSequence + 1} to ${event.sequence - 1}`);
-        timeline.append(gap);
+    if (accepted.kind === "conflict") {
+        timeline.append(el("li", "conflict", `evidence conflict: ${accepted.message}`));
+        return;
     }
+    if (accepted.gap) {
+        timeline.append(el("li", "gap", `missing events ${accepted.gap[0]} to ${accepted.gap[1]}`));
+    }
+    // Keep the inspector on the newest event only while the reader has not chosen another one.
+    const trackingLatest = selectedSequence === null || selectedSequence === lastSequence;
     lastSequence = event.sequence;
     events.push(event);
     const row = buildRow(event);
     rows.set(event.sequence, row);
     timeline.append(row);
     updateComponentCounts(components, events);
+    if (trackingLatest) {
+        selectEvent(event.sequence);
+    }
+}
+function onProgress(progress) {
+    status.textContent = progress.state;
+    status.dataset.state = progress.state;
+    detail.textContent = progress.detail;
+    const behind = Math.max(progress.latest - progress.displayed, 0);
+    lag.textContent = `displayed #${progress.displayed} · latest #${progress.latest} · lag ${behind}`;
 }
 function markRows() {
     for (const event of events) {
@@ -97,51 +115,16 @@ function selectComponent(id) {
     const count = events.filter((event) => componentOf(event) === id).length;
     void inspector.showComponent(component, count);
 }
-function follow() {
-    const source = new EventSource(`/api/attempts/${encodeURIComponent(attemptId)}/stream?after=${lastSequence}`);
-    source.onopen = () => {
-        status.textContent = "live";
-    };
-    source.addEventListener("attempt-event", (message) => {
-        const event = JSON.parse(message.data);
-        // Keep the inspector on the newest event only while the reader has not chosen another one.
-        const trackingLatest = selectedSequence === null || selectedSequence === lastSequence;
-        render(event);
-        if (trackingLatest) {
-            selectEvent(event.sequence);
-        }
-        if (event.type === "attempt_finished") {
-            source.close();
-            status.textContent = "finished";
-        }
-    });
-    source.addEventListener("recording-error", () => {
-        source.close();
-        status.textContent = "recording error: evidence is incomplete";
-    });
-    source.onerror = () => {
-        status.textContent = source.readyState === EventSource.CLOSED ? "closed" : "reconnecting";
-    };
-}
 async function start() {
     const attempts = (await (await fetch("/api/attempts")).json());
     if (attempts.length === 0) {
         status.textContent = "no attempts registered";
         return;
     }
-    attemptId = attempts[0].attempt_id;
+    const attemptId = attempts[0].attempt_id;
     inspector = new Inspector(attemptId, document.getElementById("inspector"), document.getElementById("state"), document.getElementById("evidence"));
     buildComponentMap(components, selectComponent);
-    const history = (await (await fetch(`/api/attempts/${encodeURIComponent(attemptId)}/events?after=0`)).json());
-    history.events.forEach((event) => render(event));
-    if (events.length > 0) {
-        selectEvent(events[events.length - 1].sequence);
-    }
-    if (history.events.some((event) => event.type === "attempt_finished")) {
-        status.textContent = "finished";
-        return;
-    }
-    follow();
+    follow(attemptId, { onAccepted, onProgress });
 }
 start().catch((error) => {
     status.textContent = `failed to load timeline: ${String(error)}`;

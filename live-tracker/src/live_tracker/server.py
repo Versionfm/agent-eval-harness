@@ -5,6 +5,9 @@ from __future__ import annotations
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import queue
+import socket
+import threading
 import time
 from typing import Any, Mapping
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -16,12 +19,77 @@ from live_tracker.sources import resolve_source
 WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
                 ".js": "text/javascript; charset=utf-8"}
-# ponytail: SSE polls the whole log each tick, fine for one local attempt; a seek index is the upgrade.
+# ponytail: SSE re-reads the whole log each tick; an incremental byte-offset tail is the upgrade.
 POLL_SECONDS = 0.2
+# Per-connection delivery limits: frames waiting for one socket, and how long a full buffer may stall.
+BUFFER_EVENTS = 256
+STALL_SECONDS = 5.0
+KEEPALIVE_SECONDS = 2.0
+_END = object()
+
+
+class _Refused(Exception):
+    """A request the tracker answers with an explicit HTTP error rather than guessing."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+class _Stalled(Exception):
+    """The observer's buffer stayed full: its connection is cut, the attempt is not."""
+
+
+class _Gone(Exception):
+    """The observer's writer has stopped: the browser left or the socket failed."""
+
+
+class _Observer:
+    """One SSE connection: a bounded frame buffer drained by a writer thread that owns the socket."""
+
+    def __init__(self, handler: BaseHTTPRequestHandler, buffer_events: int, stall_seconds: float):
+        self.handler = handler
+        self.stall_seconds = stall_seconds
+        self.frames: queue.Queue = queue.Queue(maxsize=buffer_events)
+        self.gone = threading.Event()
+        self.writer = threading.Thread(target=self._drain, daemon=True)
+
+    def offer(self, frame: Any) -> None:
+        """Hand a frame to the writer; a buffer that stays full blocks only this connection's reader."""
+        if self.gone.is_set():
+            raise _Gone()
+        try:
+            self.frames.put(frame, timeout=self.stall_seconds)
+        except queue.Full:
+            raise _Stalled() from None
+
+    def _drain(self) -> None:
+        try:
+            while True:
+                try:
+                    frame = self.frames.get(timeout=KEEPALIVE_SECONDS)
+                except queue.Empty:
+                    frame = ": keepalive\n\n"  # comment frame: a write to a departed browser fails here
+                if frame is _END:
+                    return
+                self.handler.wfile.write(frame.encode("utf-8"))
+                self.handler.wfile.flush()
+        except OSError:
+            pass
+        finally:
+            self.gone.set()
+
+
+def _sse(data: Mapping[str, Any], *, event: str = "attempt-event", event_id: str | None = None) -> str:
+    lines = [f"id: {event_id}"] if event_id else []
+    lines += [f"event: {event}", f"data: {json.dumps(data, ensure_ascii=False, sort_keys=True)}"]
+    return "\n".join(lines) + "\n\n"
 
 
 class _TrackerHandler(BaseHTTPRequestHandler):
     attempts: dict[str, Path] = {}
+    buffer_events = BUFFER_EVENTS
+    stall_seconds = STALL_SECONDS
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -43,7 +111,7 @@ class _TrackerHandler(BaseHTTPRequestHandler):
                 return self._json({"error": "unknown attempt"}, 404)
             action = segments[4]
             if action == "events" and len(segments) == 5:
-                return self._events(directory, url.query)
+                return self._events(segments[3], directory, url.query)
             if action == "stream" and len(segments) == 5:
                 return self._stream(segments[3], directory, url.query)
             if action == "artifacts" and len(segments) >= 6:
@@ -69,50 +137,82 @@ class _TrackerHandler(BaseHTTPRequestHandler):
             "finished": bool(events) and events[-1]["type"] == "attempt_finished",
         }
 
-    def _events(self, directory: Path, query: str) -> None:
+    def _cursor(self, attempt_id: str, query: str, latest: int) -> int:
+        """Resume point from ?after= and Last-Event-ID; an incompatible cursor is refused, not reinterpreted."""
+        raw = parse_qs(query).get("after", ["0"])[0]
+        if not raw.isdigit():
+            raise _Refused(400, "after must be a non-negative integer")
+        cursor = int(raw)
+        header = self.headers.get("Last-Event-ID", "")
+        if header:
+            owner, _, number = header.rpartition(":")
+            if owner != attempt_id or not number.isdigit():
+                raise _Refused(409, f"Last-Event-ID {header!r} is not a cursor for attempt {attempt_id}")
+            cursor = max(cursor, int(number))
+        if cursor > latest:
+            raise _Refused(409, f"cursor {cursor} is beyond the latest recorded sequence {latest}")
+        return cursor
+
+    def _events(self, attempt_id: str, directory: Path, query: str) -> None:
         try:
-            after = int(parse_qs(query).get("after", ["0"])[0])
             events = read_attempt_events(directory)
-        except ValueError:
-            return self._json({"error": "after must be an integer"}, 400)
+            after = self._cursor(attempt_id, query, events[-1]["sequence"] if events else 0)
+        except _Refused as exc:
+            return self._json({"error": str(exc)}, exc.status)
         except RecordingError as exc:
             return self._json({"error": str(exc)}, 500)
         self._json({"events": [event for event in events if event["sequence"] > after]})
 
     def _stream(self, attempt_id: str, directory: Path, query: str) -> None:
-        sent = int(parse_qs(query).get("after", ["0"])[0] or 0)
-        resume = self.headers.get("Last-Event-ID", "")
-        if resume.startswith(f"{attempt_id}:") and resume.split(":", 1)[1].isdigit():
-            sent = max(sent, int(resume.split(":", 1)[1]))
+        try:
+            events = read_attempt_events(directory)
+            sent = self._cursor(attempt_id, query, events[-1]["sequence"] if events else 0)
+        except _Refused as exc:
+            return self._json({"error": str(exc)}, exc.status)
+        except RecordingError as exc:
+            return self._json({"error": str(exc)}, 500)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
+        self.wfile.write(b"retry: 500\n\n")
+        self.wfile.flush()
+        observer = _Observer(self, self.buffer_events, self.stall_seconds)
+        observer.writer.start()
+        reported = None
         try:
             while True:
                 try:
                     events = read_attempt_events(directory)
                 except RecordingError as exc:
-                    self._frame(f"event: recording-error\ndata: {json.dumps({'error': str(exc)})}\n\n")
-                    return
+                    observer.offer(_sse({"error": str(exc)}, event="recording-error"))
+                    break
+                finished = False
                 for event in events:
                     if event["sequence"] <= sent:
                         continue
                     sent = event["sequence"]
-                    self._frame(
-                        f"id: {attempt_id}:{sent}\nevent: attempt-event\n"
-                        f"data: {json.dumps(event, ensure_ascii=False, sort_keys=True)}\n\n"
-                    )
-                    if event["type"] == "attempt_finished":
-                        return
+                    observer.offer(_sse(event, event_id=f"{attempt_id}:{sent}"))
+                    finished = event["type"] == "attempt_finished"
+                head = events[-1]["sequence"] if events else 0
+                if head != reported:
+                    reported = head
+                    observer.offer(_sse({"latest_sequence": head}, event="head"))
+                if finished:
+                    break
+                if observer.gone.is_set():
+                    return
                 time.sleep(POLL_SECONDS)
-        except (BrokenPipeError, ConnectionResetError):
-            # A departed browser never affects the attempt; the recorder keeps writing.
-            return
-
-    def _frame(self, text: str) -> None:
-        self.wfile.write(text.encode("utf-8"))
-        self.wfile.flush()
+            observer.offer(_END)
+        except _Stalled:
+            # A full buffer means this observer cannot keep up: cut its socket, never the recorder.
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        except _Gone:
+            pass
+        observer.writer.join()
 
     def _artifact(self, directory: Path, relative: str) -> None:
         root = directory.resolve()
@@ -146,16 +246,17 @@ class _TrackerHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-
-
 def make_server(
-    attempts: Mapping[str, Path], *, host: str = "127.0.0.1", port: int = 0
+    attempts: Mapping[str, Path], *, host: str = "127.0.0.1", port: int = 0,
+    buffer_events: int = BUFFER_EVENTS, stall_seconds: float = STALL_SECONDS,
 ) -> ThreadingHTTPServer:
     """Serve registered attempt directories on loopback only."""
     if host not in {"127.0.0.1", "localhost"}:
         raise ValueError("the live tracker serves loopback addresses only")
     registry = {attempt_id: Path(path).expanduser().resolve() for attempt_id, path in attempts.items()}
-    handler = type("TrackerHandler", (_TrackerHandler,), {"attempts": registry})
+    handler = type("TrackerHandler", (_TrackerHandler,), {
+        "attempts": registry, "buffer_events": buffer_events, "stall_seconds": stall_seconds,
+    })
     return _Server((host, port), handler)
 
 
