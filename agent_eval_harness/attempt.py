@@ -6,7 +6,6 @@ import copy
 from dataclasses import dataclass
 import hashlib
 import json
-import math
 from pathlib import Path
 import shutil
 import tempfile
@@ -204,110 +203,64 @@ def _finalize_accounting(
             }
 
 
-class _Sum:
-    """A running float total with the compensation Python's sum() applies (3.12+), so it equals sum(values)."""
-
-    def __init__(self) -> None:
-        self.count = 0
-        self._total = 0.0
-        self._compensation = 0.0
-
-    def add(self, value: float) -> None:
-        if self.count == 0:
-            self._total = value
-        else:
-            total = self._total + value
-            if abs(self._total) >= abs(value):
-                self._compensation += (self._total - total) + value
-            else:
-                self._compensation += (value - total) + self._total
-            self._total = total
-        self.count += 1
-
-    def value(self) -> float:
-        if self._compensation and math.isfinite(self._compensation):
-            return self._total + self._compensation
-        return self._total
-
-
-class _CostTally:
-    """Provider evidence totals. Each call consumes only the usage and trace records added since the last."""
-
-    def __init__(self) -> None:
-        self.usage_totals: dict[str, float] = {}
-        self._usage_seen = 0
-        self._trace_seen = 0
-        self._request_count = 0
-        self._billing_count = 0
-        self._estimates = _Sum()
-        self._reports = _Sum()
-
-    def consume(self, usage_records: list[dict[str, Any]], trace: list[dict[str, Any]]) -> None:
-        for event in trace[self._trace_seen:]:
-            if event.get("type") == "model" and event.get("status") != "budget_stopped":
-                self._request_count += 1
-        self._trace_seen = len(trace)
-        for usage in usage_records[self._usage_seen:]:
-            for key, value in usage.items():
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    self.usage_totals[key] = self.usage_totals.get(key, 0) + value
-            billing = usage.get("billing") if isinstance(usage, dict) else None
-            if not isinstance(billing, dict):
-                continue
-            self._billing_count += 1
-            estimate = billing.get("estimated_cost", {})
-            if (isinstance(estimate, dict) and estimate.get("status") == "estimated"
-                    and isinstance(estimate.get("amount"), (int, float))):
-                self._estimates.add(float(estimate["amount"]))
-            report = billing.get("reported_cost", {})
-            if (isinstance(report, dict) and report.get("status") == "reported"
-                    and isinstance(report.get("amount"), (int, float))):
-                self._reports.add(float(report["amount"]))
-        self._usage_seen = len(usage_records)
-
-    def summary(self) -> dict[str, Any]:
-        """Summarize provider evidence without turning missing usage into charges."""
-        if not self._billing_count:
-            unavailable = {"status": "unavailable", "amount": None, "currency": "USD"}
-            return {"reported": dict(unavailable), "estimated": dict(unavailable)}
-        count = self._request_count
-        missing = max(0, count - self._estimates.count)
-        if self._estimates.count:
-            estimated = {
-                "status": "partial" if missing else "estimated",
-                "amount": round(self._estimates.value(), 12),
-                "currency": "USD",
-                "missing_usage_calls": missing,
-                "request_count": count,
-            }
-        else:
-            estimated = {
-                "status": "unavailable", "amount": None, "currency": "USD",
-                "missing_usage_calls": count,
-                "request_count": count,
-            }
-        missing_reports = max(0, count - self._reports.count)
-        if self._reports.count:
-            reported = {
-                "status": "partial" if missing_reports else "reported",
-                "amount": round(self._reports.value(), 12),
-                "currency": "USD",
-                "missing_charge_calls": missing_reports,
-                "request_count": count,
-            }
-        else:
-            reported = {
-                "status": "unavailable", "amount": None, "currency": "USD",
-                "missing_charge_calls": count,
-                "request_count": count,
-            }
-        return {"reported": reported, "estimated": estimated}
-
-
 def _cost_summary(usage_records: list[dict[str, Any]], trace: list[dict[str, Any]]) -> dict[str, Any]:
-    tally = _CostTally()
-    tally.consume(usage_records, trace)
-    return tally.summary()
+    """Summarize provider evidence without turning missing usage into charges."""
+    model_events = [event for event in trace if event.get("type") == "model"]
+    request_events = [
+        event for event in model_events if event.get("status") != "budget_stopped"
+    ]
+    billing_records = [
+        usage.get("billing") for usage in usage_records
+        if isinstance(usage, dict) and isinstance(usage.get("billing"), dict)
+    ]
+    if not billing_records:
+        unavailable = {"status": "unavailable", "amount": None, "currency": "USD"}
+        return {"reported": dict(unavailable), "estimated": dict(unavailable)}
+
+    known_estimates = []
+    known_reports = []
+    for billing in billing_records:
+        estimate = billing.get("estimated_cost", {})
+        if (isinstance(estimate, dict) and estimate.get("status") == "estimated"
+                and isinstance(estimate.get("amount"), (int, float))):
+            known_estimates.append(float(estimate["amount"]))
+        report = billing.get("reported_cost", {})
+        if (isinstance(report, dict) and report.get("status") == "reported"
+                and isinstance(report.get("amount"), (int, float))):
+            known_reports.append(float(report["amount"]))
+
+    missing = max(0, len(request_events) - len(known_estimates))
+    if known_estimates:
+        estimated = {
+            "status": "partial" if missing else "estimated",
+            "amount": round(sum(known_estimates), 12),
+            "currency": "USD",
+            "missing_usage_calls": missing,
+            "request_count": len(request_events),
+        }
+    else:
+        estimated = {
+            "status": "unavailable", "amount": None, "currency": "USD",
+            "missing_usage_calls": len(request_events),
+            "request_count": len(request_events),
+        }
+
+    missing_reports = max(0, len(request_events) - len(known_reports))
+    if known_reports:
+        reported = {
+            "status": "partial" if missing_reports else "reported",
+            "amount": round(sum(known_reports), 12),
+            "currency": "USD",
+            "missing_charge_calls": missing_reports,
+            "request_count": len(request_events),
+        }
+    else:
+        reported = {
+            "status": "unavailable", "amount": None, "currency": "USD",
+            "missing_charge_calls": len(request_events),
+            "request_count": len(request_events),
+        }
+    return {"reported": reported, "estimated": estimated}
 
 
 def _observed_models(usage_records: list[dict[str, Any]]) -> list[str]:
@@ -319,43 +272,29 @@ def _observed_models(usage_records: list[dict[str, Any]]) -> list[str]:
     return models
 
 
-class _SelectedPointTally:
-    """Budget, context and accounting facts known from history so far (observer copy only).
-
-    Messages, usage and trace only grow, so each snapshot reads just the items added since the last one.
-    The values equal a rescan of the whole history: the context size is the byte length of the JSON list.
-    """
-
-    def __init__(self) -> None:
-        self._costs = _CostTally()
-        self._messages_seen = 0
-        self._tool_result_messages = 0
-        self._message_bytes = 0
-
-    def state(self, messages: list[dict[str, Any]], model_call_count: int, *, budgets: Any,
-              usage_records: list[dict[str, Any]], trace: list[dict[str, Any]]) -> dict[str, Any]:
-        for message in messages[self._messages_seen:]:
-            self._tool_result_messages += 1 if message.get("role") == "tool" else 0
-            self._message_bytes += len(json.dumps(
-                message, ensure_ascii=False, separators=(",", ":"), default=_json_default,
-            ).encode("utf-8"))
-        self._messages_seen = len(messages)
-        self._costs.consume(usage_records, trace)
-        cost = self._costs.summary()
-        # "[" and "]" plus one comma between each pair of messages.
-        context_bytes = 2 + self._message_bytes + max(0, self._messages_seen - 1)
-        return {
-            "model_calls": model_call_count,
-            "max_model_calls": budgets.max_model_calls,
-            "context_bytes": context_bytes,
-            "max_context_bytes": budgets.max_context_bytes,
-            "tool_result_messages": self._tool_result_messages,
-            "tool_output_limit_bytes": budgets.tool_output_limit_bytes,
-            "attempt_deadline_seconds": budgets.attempt_deadline_seconds,
-            "usage_totals": dict(self._costs.usage_totals),
-            "estimated_cost": cost["estimated"],
-            "reported_cost": cost["reported"],
-        }
+def _selected_point_state(
+    messages: list[dict[str, Any]], model_call_count: int, *, budgets: Any,
+    usage_records: list[dict[str, Any]], trace: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Budget, context and accounting facts known from history so far (observer copy only)."""
+    usage_totals: dict[str, float] = {}
+    for usage in usage_records:
+        for key, value in usage.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                usage_totals[key] = usage_totals.get(key, 0) + value
+    cost = _cost_summary(usage_records, trace)
+    return {
+        "model_calls": model_call_count,
+        "max_model_calls": budgets.max_model_calls,
+        "context_bytes": _context_size_bytes(messages),
+        "max_context_bytes": budgets.max_context_bytes,
+        "tool_result_messages": sum(1 for message in messages if message.get("role") == "tool"),
+        "tool_output_limit_bytes": budgets.tool_output_limit_bytes,
+        "attempt_deadline_seconds": budgets.attempt_deadline_seconds,
+        "usage_totals": usage_totals,
+        "estimated_cost": cost["estimated"],
+        "reported_cost": cost["reported"],
+    }
 
 
 def _evaluate_candidate_changes(
@@ -523,12 +462,10 @@ def attempt_and_evaluate(
                 {"messages.json": json_artifact(messages)},
             )
 
-            tally = _SelectedPointTally()
-
             def snapshot_state(
                 current_messages: list[dict[str, Any]], current_count: int
             ) -> dict[str, Any]:
-                return tally.state(
+                return _selected_point_state(
                     current_messages, current_count, budgets=budgets,
                     usage_records=usage_records, trace=trace,
                 )
