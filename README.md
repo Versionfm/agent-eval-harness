@@ -129,4 +129,38 @@ The mapping and framework boundary are documented in
 tool nodes, a message reducer, conditional routing, and START/END. It adds no
 checkpoint persistence or automatic context compaction.
 
+## Render a side-by-side report from saved attempts
+
+The comparison renderer reads existing attempt artifacts and performs no model
+request, task execution, or evaluation. It shows configuration match flags,
+verdicts and stop reasons, token/cache use, model and tool latency, reported and
+estimated cost, event evidence, the candidate diff, canonical checks, and a
+separate qualitative review. Long request context and event payloads are
+collapsed by default. Missing fields remain marked unavailable.
+
+For example, compare the recorded successful control attempts without rerunning
+the parity experiment:
+
+```bash
+python3 -m agent_eval_harness.compare_report \
+  --python-loop /path/to/langgraph-parity/correct/python-loop \
+  --langgraph /path/to/langgraph-parity/correct/langgraph \
+  --output /path/to/issue-7/comparison.html
+```
+
+The report links to each attempt's metadata, trace, candidate patch, check
+results, and retained tool outputs. Configuration dimensions with missing
+metadata are marked unavailable; differing values are marked mismatched. A
+pair with mismatched task, source, provider/model, settings, or budgets must not
+be presented as a controlled comparison. Environment matching uses the
+recorded task-image Dockerfile hash and runtime; mutable tags and recorded image
+IDs are shown separately for audit. Missing dependency versions remain
+unavailable. Token and latency differences are shown separately from money
+because cache warmth and pricing periods affect cost.
+
+To show a completed review, pass one separate JSON review record for each
+attempt. The record is validated against the attempt's task, implementation,
+source revision, and start timestamp. Without a record the report says that
+qualitative review is pending. See [the review record contract](docs/REVIEW_RECORD.md).
+
 See the [design interview](docs/design-interview.md), [published specification](docs/SPEC.md), [implementation design](docs/DESIGN.md), [learning sequence](docs/LEARNING_PLAN.md), and [ticket breakdown](docs/TICKETS.md) for the broader project.
