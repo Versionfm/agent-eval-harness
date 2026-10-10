@@ -4,11 +4,24 @@ from __future__ import annotations
 
 import html
 import json
+import math
 from typing import Any
 
 
 def _pretty(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True, default=str)
+
+
+def _duration_label(value: Any) -> str:
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+        return "Unavailable"
+    seconds = float(value)
+    if abs(seconds) < 1:
+        return f"{seconds * 1000:.0f} ms"
+    if seconds < 60:
+        return f"{seconds:.2f} s"
+    minutes, remaining = divmod(seconds, 60)
+    return f"{int(minutes)} min {remaining:.1f} s"
 
 
 def _money_label(metric: Any, *, label: str) -> str:
@@ -65,10 +78,10 @@ def render_attempt_report(result: dict[str, Any]) -> str:
             title = f"Model call {event.get('model_call', '?')}"
         headline = html.escape(title)
         status = html.escape(str(event.get("status", "recorded")))
-        duration = html.escape(str(event.get("duration_seconds", "unavailable")))
+        duration = html.escape(_duration_label(event.get("duration_seconds")))
         truncation = ""
         visible_result = event.get("model_visible_result", {})
-        if visible_result.get("truncated"):
+        if isinstance(visible_result, dict) and visible_result.get("truncated"):
             output_artifact = event.get("result", {}).get("output_artifact", "unavailable")
             truncation = (
                 "<p class=\"unknown\">Model-visible output was truncated; full output artifact: "
@@ -76,7 +89,7 @@ def render_attempt_report(result: dict[str, Any]) -> str:
             )
         event_cards.append(
             "<details class=\"event\"><summary>"
-            f"<strong>{headline}</strong> <span>{status}</span> <small>{duration}s</small>"
+            f"<strong>{headline}</strong> <span>{status}</span> <small>{duration}</small>"
             "</summary>" + truncation + "<pre>" + html.escape(_pretty(event)) + "</pre></details>"
         )
 
@@ -137,8 +150,8 @@ def render_attempt_report(result: dict[str, Any]) -> str:
         "Termination": termination,
         "Functional verdict": verdict,
         "Failure category": result.get("failure_category", "none"),
-        "Duration": f"{result.get('duration_seconds', 'unavailable')} seconds",
-        "Attempt duration": f"{metadata.get('attempt_duration_seconds', 'unavailable')} seconds",
+        "Duration": _duration_label(result.get("duration_seconds")),
+        "Attempt duration": _duration_label(metadata.get("attempt_duration_seconds")),
         "Model requests / retries": (
             f"{metadata.get('model_call_count', 'unavailable')} / "
             f"{metadata.get('retry_count', 'unavailable')}"
@@ -154,7 +167,12 @@ def render_attempt_report(result: dict[str, Any]) -> str:
         f"<dt>{html.escape(str(key))}</dt><dd>{html.escape(str(value))}</dd>"
         for key, value in metadata_rows.items()
     )
-    initial = "<pre>" + html.escape(_pretty(initial_context)) + "</pre>"
+    context_count = len(initial_context) if isinstance(initial_context, (list, dict)) else 0
+    initial = (
+        '<details class="initial-context"><summary>Show '
+        f"{context_count} initial messages</summary><pre>"
+        + html.escape(_pretty(initial_context)) + "</pre></details>"
+    )
     event_html = "".join(event_cards) or "<p>No model or tool events were recorded.</p>"
     error = result.get("harness_error")
     error_html = f"<p class=\"bad\">{html.escape(str(error))}</p>" if error else ""
