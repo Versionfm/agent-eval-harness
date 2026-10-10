@@ -25,6 +25,10 @@ REGISTERED_SOURCES: dict[str, str] = {
         "Tool execution phase: runs the model's tool calls in order, bounds the model-visible "
         "output and appends each tool result to the conversation."
     ),
+    "agent_eval_harness.langgraph_attempt:route_after_node": (
+        "LangGraph router: after each node, chooses the next node or the end from the recorded "
+        "stop reason, the model's tool calls and the separate graph-step budget."
+    ),
 }
 
 

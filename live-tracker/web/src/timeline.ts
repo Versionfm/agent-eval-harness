@@ -5,7 +5,7 @@ import { buildComponentMap, updateComponentCounts } from "./components.js";
 import { Accepted, Progress, follow } from "./connection.js";
 import { el } from "./dom.js";
 import { Inspector } from "./inspector.js";
-import { COMPONENTS, TrackerEvent, componentOf } from "./model.js";
+import { COMPONENTS, OPERATION_STARTS, TrackerEvent, componentOf } from "./model.js";
 
 const timeline = document.getElementById("timeline") as HTMLOListElement;
 const status = document.getElementById("status") as HTMLElement;
@@ -29,6 +29,13 @@ function describe(event: TrackerEvent): string {
       return `initial context with ${data.message_count} messages`;
     case "phase.enter":
       return `phase ${data.phase} (loop step ${data.loop_step})`;
+    case "node.enter":
+      return `graph node ${data.node} entered (graph step ${data.graph_step_count})`;
+    case "node.outcome":
+      return `graph node ${data.node} finished (graph step ${data.graph_step_count})` +
+        (data.termination_reason ? `; stop ${data.termination_reason}` : "");
+    case "route.decision":
+      return `router after ${data.after_node}: ${data.next} (${data.reason})`;
     case "state":
       return `state: ${data.model_calls ?? "?"} model calls, ${data.context_bytes ?? "?"} context bytes`;
     case "model.start":
@@ -60,6 +67,9 @@ function buildRow(event: TrackerEvent): HTMLLIElement {
   if (event.operation_id) {
     button.append(el("code", "", event.operation_id));
   }
+  if (OPERATION_STARTS.has(event.type)) {
+    button.append(el("span", "operation-status"));
+  }
   button.addEventListener("click", () => selectEvent(event.sequence));
   row.append(button);
   return row;
@@ -87,6 +97,8 @@ function onAccepted(event: TrackerEvent, accepted: Accepted): void {
   updateComponentCounts(components, events);
   if (trackingLatest) {
     selectEvent(event.sequence);
+  } else {
+    markRows();
   }
 }
 
@@ -98,7 +110,13 @@ function onProgress(progress: Progress): void {
   lag.textContent = `displayed #${progress.displayed} · latest #${progress.latest} · lag ${behind}`;
 }
 
+// A start with no recorded outcome is waiting while the attempt runs, and unresolved once it has finished.
 function markRows(): void {
+  const finished = events.some((event) => event.type === "attempt_finished");
+  const closed = new Set(
+    events.filter((event) => event.operation_id && !OPERATION_STARTS.has(event.type))
+      .map((event) => event.operation_id),
+  );
   for (const event of events) {
     const row = rows.get(event.sequence);
     if (!row) {
@@ -106,6 +124,14 @@ function markRows(): void {
     }
     row.classList.toggle("selected", event.sequence === selectedSequence);
     row.classList.toggle("match", activeComponent !== null && componentOf(event) === activeComponent);
+    if (!OPERATION_STARTS.has(event.type)) {
+      continue;
+    }
+    const outcome = closed.has(event.operation_id);
+    const label = outcome ? "" : finished ? "unresolved" : "waiting";
+    row.classList.toggle("unresolved", label === "unresolved");
+    row.classList.toggle("waiting", label === "waiting");
+    row.querySelector(".operation-status")!.textContent = label;
   }
 }
 
