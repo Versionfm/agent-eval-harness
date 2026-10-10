@@ -31,3 +31,15 @@ _Avoid_: Agent-written tests
 **Attempt trace**:
 The recorded observable activity of a task attempt, including available model responses, tool calls, tool results, and execution events. Reasoning summaries may be included; hidden model reasoning is not assumed available.
 _Avoid_: Complete internal thinking
+
+**Attempt**:
+One execution of a coding agent against a specific task and starting repository state.
+_Avoid_: Benchmark, experiment
+
+**Functional verdict**:
+The evaluator's result for a proposed repair against the task's acceptance checks.
+_Avoid_: Agent completion
+
+**Termination reason**:
+The recorded condition that ended an agent attempt, independently of whether its proposed repair works.
+_Avoid_: Functional verdict

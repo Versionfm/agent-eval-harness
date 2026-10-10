@@ -6,14 +6,14 @@
 - Build a personal portfolio and research project, with learning harness engineering as an explicit goal.
 - Evaluate bug repair on a small fixed task set, capturing diagnosis in the trace.
 - Select another benchmark repository; the algo trading repository is excluded by the user.
-- Give the agent full access to its task repository, comparable to repository access in Codex and Claude. Host access, credentials, external services, and evaluator boundaries have not been decided.
+- Give the agent full access to its task repository, comparable to repository access in Codex and Claude, within the agreed disposable container boundary.
 - Allow substantial learning time rather than imposing the proposed two-week deadline.
 - Explore several inexpensive hosted models and local models on the user's 16 GB GPU. Model choices, spending limits, and verified local feasibility remain open.
 - Stress-test the design through numbered decision rounds and document decisions as they are confirmed.
 - Learn and build both the coding-agent harness and an independent evaluation system.
 - Prefer small, understandable open-source repositories with introduced behavioral bugs; the user's existing apps are also candidates. Minimize time spent learning benchmark codebases.
 - Keep canonical acceptance checks outside the agent's writable task copy. The agent delivers its observable reasoning, tool activity, and code diff for evaluator review.
-- Use Codex as an evaluator/reviewer; the respective roles of executable checks and qualitative review still need clarification.
+- Use Codex as an evaluator/reviewer alongside executable checks, with qualitative review kept separate from functional success.
 - First milestone: one reproducible repair attempt with trace, diff, independent verdict, elapsed time, and usage measurements. It must exercise a design that can support harder tasks.
 - Build an explicit Python agent loop and a side-by-side LangGraph implementation for learning what the framework handles.
 - Teach through incremental slices, with explanations, observable experiments, and user inspection before expansion.
@@ -30,7 +30,7 @@
 - Initial context: task description, repository instructions, and a short file map; source discovery happens through tools.
 - Stop on agent-declared completion or hard limits on turns, elapsed time, and tool-output size. Preserve partial traces and patches. Calibrate numeric limits with a smoke run.
 - Milestone acceptance requires baseline-pass, defect-fail, known-repair-pass evidence and comparable traces/reports from both implementations. Agent failure is a valid measured outcome.
-- Initial hosted model target: Qwen3.8-27B, replacing the GPT-5.4 mini proposal. Provider and generation settings remain to be selected.
+- Initial hosted model: DeepSeek-V4.1-Flash through the direct DeepSeek API (`deepseek-flash`), thinking enabled at low effort. Qwen is a later comparison candidate.
 - Context exhaustion initially stops the attempt with preserved artifacts; traceable compaction is a later experiment.
 - Prepare dependencies before attempts; task-container networking is disabled. The outer harness handles model requests and keeps API credentials outside the task container.
 - Use bounded, logged retries for transient provider errors; return tool errors as structured results to the agent.
@@ -159,7 +159,7 @@ The model card reports strong coding benchmark results, but results depend on th
 
 Hosted provider settings, actual account access, latency, tool-call reliability, and local 16 GB deployment remain unverified. OpenRouter routing/prices vary by backend; controlled comparisons should fix and record the backend rather than silently switch providers.
 
-## Round 7 — awaiting answers
+## Round 7 — answered
 
 27. Hosted provider: Alibaba Cloud directly or OpenRouter with a pinned backend?
    Recommendation: OpenRouter with a fixed tool-capable backend and automatic fallback disabled, for easier later model comparisons; choose backend using current pricing plus a tool-call smoke check.
@@ -171,7 +171,7 @@ After these choices, prepare a concrete design and learning sequence for final s
 ## Round 7 follow-up
 
 - Q28 accepted: thinking enabled at a modest supported effort and bounded output budget, with identical settings across orchestrators.
-- Q27 remains open. The user raised concerns about OpenRouter cache misses increasing cost and asked whether DeepSeek or a cheaper model should replace Qwen.
+- The user raised concerns about OpenRouter cache misses increasing cost and asked whether DeepSeek or a cheaper model should replace Qwen. The subsequent direct DeepSeek recommendation was accepted, resolving Q23 and Q27.
 
 ## DeepSeek and caching source checks — 2026-10-10
 
@@ -186,6 +186,10 @@ DeepSeek's current `deepseek-flash` API maps to DeepSeek-V4.1-Flash and supports
 
 OpenRouter documents provider sticky routing and session identifiers to improve cache reuse, but these do not guarantee a hit. Manual provider ordering takes precedence over automatic stickiness. Cache reads, writes, and applicable rates depend on the backend. We have not measured this user's cache hit rate and cannot confirm a general claim of unusually frequent OpenRouter misses.
 
-New proposal, awaiting confirmation: start with DeepSeek-V4.1-Flash through the direct DeepSeek API, with thinking enabled at low effort. Keep Qwen as a later comparison. This reduces initial routing variables and offers low uncached token rates; actual repair quality, tool reliability, and latency require a smoke run.
+Accepted: start with DeepSeek-V4.1-Flash through the direct DeepSeek API, with thinking enabled at low effort. Keep Qwen as a later comparison. This reduces initial routing variables and offers low uncached token rates; actual repair quality, tool reliability, and latency require a smoke run.
 
 Record cached and uncached input, output/reasoning usage when exposed, retries, and actual or clearly labeled estimated cost in reports. Keep request prefixes stable when practical. Low-cost token pricing alone is not evidence of lower cost per successful repair.
+
+## Final shared-understanding check
+
+The concrete [design](DESIGN.md) and [learning sequence](LEARNING_PLAN.md) summarize accepted direction and identify proposed implementation defaults. Await the user's confirmation before beginning implementation. Infrastructure and API access are factual prerequisites to verify, not assumed successes.

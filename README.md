@@ -11,3 +11,5 @@ The project is a personal portfolio and research tool intended to produce reprod
 The first milestone is one reproducible repair attempt on the user's ML Tutor repository, with a tool trace, code diff, independent verdict, elapsed time, and model usage. It should exercise the same path used for later, harder tasks. Acceptance checks determine functional success; Codex review provides separate qualitative judgments. Reports will expose available reasoning summaries and tool activity. Learning proceeds through incremental slices, comparing harness behavior before comparing models.
 
 See [the design interview](docs/design-interview.md) for confirmed scope and open questions.
+
+The proposed [implementation design](docs/DESIGN.md) and [learning sequence](docs/LEARNING_PLAN.md) are ready for the final shared-understanding check. Initial model: direct DeepSeek Flash with thinking enabled at low effort; Qwen is a later comparison.
