@@ -1,4 +1,4 @@
-"""Prepare and run the pinned ML Tutor task admission experiment."""
+"""CLI · prepare and run the pinned ML Tutor task admission experiment."""
 
 from __future__ import annotations
 

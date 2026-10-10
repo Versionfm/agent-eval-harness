@@ -1,4 +1,4 @@
-"""Admission rules for evaluator-owned task evidence."""
+"""Bench · admission rules for evaluator-owned task evidence."""
 
 from collections.abc import Mapping
 import hashlib

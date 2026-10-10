@@ -1,4 +1,4 @@
-"""Run one bounded, matched Python-loop and LangGraph comparison."""
+"""CLI · run one bounded, matched Python-loop and LangGraph comparison."""
 
 from __future__ import annotations
 

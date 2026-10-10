@@ -1,4 +1,4 @@
-"""Run an offline failure/recovery attempt and preserve its partial-at-budget result."""
+"""CLI · run an offline failure/recovery attempt and preserve its partial-at-budget result."""
 
 from __future__ import annotations
 

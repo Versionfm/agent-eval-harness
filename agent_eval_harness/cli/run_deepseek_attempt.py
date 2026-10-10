@@ -1,4 +1,4 @@
-"""Run a bounded DeepSeek smoke first, then one independently evaluated repair."""
+"""CLI · run a bounded DeepSeek smoke first, then one independently evaluated repair."""
 
 from __future__ import annotations
 

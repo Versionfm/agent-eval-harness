@@ -1,4 +1,4 @@
-"""Small provider-neutral model contracts for coding-agent attempts."""
+"""Model adapter · provider-neutral model contracts for coding-agent attempts, and the scripted offline adapter."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Disposable task and independent evaluator containers."""
+"""Bench · task image build, defective-copy setup and canonical checks. The container class is in harness/permissions.py."""
 
 from __future__ import annotations
 

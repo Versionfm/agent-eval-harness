@@ -1,4 +1,8 @@
-"""Container isolation policy shared by task setup and evaluator workers."""
+"""09 · Permissions & safety — container isolation policy and the disposable task container.
+
+The policy is shared by task setup and evaluator workers. DockerTaskContainer, defined here, is the one
+writable, network-isolated container that a single attempt's tools run in.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Direct DeepSeek Chat Completions adapter for the shared model contract."""
+"""Model adapter · direct DeepSeek Chat Completions adapter for the shared model contract, with spend budgeting."""
 
 from __future__ import annotations
 

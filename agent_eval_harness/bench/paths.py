@@ -1,4 +1,4 @@
-"""Resolve external learning artifacts beside either a checkout or managed worktree."""
+"""Bench · resolve external learning artifacts beside either a checkout or managed worktree."""
 
 from pathlib import Path
 

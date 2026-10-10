@@ -1,4 +1,4 @@
-"""Run the inspectable, offline scripted title-retrieval repair attempt."""
+"""CLI · run the inspectable, offline scripted title-retrieval repair attempt."""
 
 from __future__ import annotations
 

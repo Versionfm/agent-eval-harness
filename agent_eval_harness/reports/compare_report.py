@@ -1,4 +1,4 @@
-"""Render a local side-by-side report from saved attempt artifacts."""
+"""Reports · render a local side-by-side report from saved attempt artifacts."""
 
 from __future__ import annotations
 

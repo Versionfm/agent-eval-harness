@@ -1,4 +1,4 @@
-"""Bounded provider requests and the explicit Python agent loop."""
+"""01 · While loop — bounded provider requests and the explicit Python agent loop."""
 
 from __future__ import annotations
 

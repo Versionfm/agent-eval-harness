@@ -1,4 +1,4 @@
-"""Build the initial system and task messages shown to the coding model."""
+"""07 · System prompt assembly — build the initial system and task messages shown to the coding model."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Concrete repository tools implemented inside the disposable task container."""
+"""05 · Built-in primitives — the concrete repository tools, run inside the disposable task container."""
 
 from __future__ import annotations
 
