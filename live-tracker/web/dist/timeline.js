@@ -1,11 +1,21 @@
-// Minimal timeline client: one attempt, rendered from the SSE stream (history, then live).
-// Evidence is written with textContent only; links are built from validated paths.
+// Workbench entry point (layout A): component map, chronological timeline and inspector.
+// The saved history plus SSE feed one attempt (connection.ts owns delivery). Evidence is written with textContent only.
+import { buildComponentMap, updateComponentCounts } from "./components.js";
 import { follow } from "./connection.js";
-const ARTIFACT_PATH = /^artifacts\/[0-9a-f]{64}$/;
+import { el } from "./dom.js";
+import { Inspector } from "./inspector.js";
+import { COMPONENTS, componentOf } from "./model.js";
 const timeline = document.getElementById("timeline");
 const status = document.getElementById("status");
 const detail = document.getElementById("detail");
 const lag = document.getElementById("lag");
+const components = document.getElementById("components");
+let inspector;
+const events = [];
+const rows = new Map();
+let lastSequence = 0;
+let selectedSequence = null;
+let activeComponent = null;
 function describe(event) {
     const data = event.data;
     switch (event.type) {
@@ -13,6 +23,10 @@ function describe(event) {
             return `attempt started for ${data.task_id} (${data.orchestrator})`;
         case "initial_context":
             return `initial context with ${data.message_count} messages`;
+        case "phase.enter":
+            return `phase ${data.phase} (loop step ${data.loop_step})`;
+        case "state":
+            return `state: ${data.model_calls ?? "?"} model calls, ${data.context_bytes ?? "?"} context bytes`;
         case "model.start":
             return `model call ${data.model_call} started with ${data.message_count} messages`;
         case "model.outcome":
@@ -27,56 +41,43 @@ function describe(event) {
             return event.type;
     }
 }
-function addGap(from, to) {
-    const gap = document.createElement("li");
-    gap.className = "gap";
-    gap.textContent = `missing events ${from} to ${to}`;
-    timeline.append(gap);
-}
-function renderEvent(attemptId, event) {
-    const row = document.createElement("li");
+function buildRow(event) {
+    const row = el("li");
     row.dataset.type = event.type;
     row.dataset.sequence = String(event.sequence);
-    const sequence = document.createElement("span");
-    sequence.className = "sequence";
-    sequence.textContent = `#${event.sequence}`;
-    const kind = document.createElement("span");
-    kind.className = "kind";
-    kind.textContent = event.type;
-    const text = document.createElement("span");
-    text.textContent = describe(event);
-    row.append(sequence, kind, text);
+    const button = el("button", "row");
+    button.type = "button";
+    button.append(el("span", "sequence", `#${event.sequence}`), el("span", "kind", event.type), el("span", "text", describe(event)));
     if (event.operation_id) {
-        const operation = document.createElement("code");
-        operation.textContent = event.operation_id;
-        row.append(operation);
+        button.append(el("code", "", event.operation_id));
     }
-    for (const artifact of event.artifacts) {
-        if (!ARTIFACT_PATH.test(artifact.path)) {
-            continue;
-        }
-        const link = document.createElement("a");
-        link.href = `/api/attempts/${encodeURIComponent(attemptId)}/artifacts/${artifact.path}`;
-        link.textContent = `${artifact.role} (${artifact.bytes} bytes)`;
-        row.append(link);
-    }
-    timeline.append(row);
+    button.addEventListener("click", () => selectEvent(event.sequence));
+    row.append(button);
+    return row;
 }
-function onAccepted(attemptId, event, accepted) {
+// Only accepted events reach the timeline: duplicates are dropped by the ledger, gaps and conflicts are explicit rows.
+function onAccepted(event, accepted) {
     if (accepted.kind === "duplicate") {
-        return; // redelivered after a reconnect: already displayed
+        return;
     }
     if (accepted.kind === "conflict") {
-        const row = document.createElement("li");
-        row.className = "conflict";
-        row.textContent = `evidence conflict: ${accepted.message}`;
-        timeline.append(row);
+        timeline.append(el("li", "conflict", `evidence conflict: ${accepted.message}`));
         return;
     }
     if (accepted.gap) {
-        addGap(accepted.gap[0], accepted.gap[1]);
+        timeline.append(el("li", "gap", `missing events ${accepted.gap[0]} to ${accepted.gap[1]}`));
     }
-    renderEvent(attemptId, event);
+    // Keep the inspector on the newest event only while the reader has not chosen another one.
+    const trackingLatest = selectedSequence === null || selectedSequence === lastSequence;
+    lastSequence = event.sequence;
+    events.push(event);
+    const row = buildRow(event);
+    rows.set(event.sequence, row);
+    timeline.append(row);
+    updateComponentCounts(components, events);
+    if (trackingLatest) {
+        selectEvent(event.sequence);
+    }
 }
 function onProgress(progress) {
     status.textContent = progress.state;
@@ -85,6 +86,35 @@ function onProgress(progress) {
     const behind = Math.max(progress.latest - progress.displayed, 0);
     lag.textContent = `displayed #${progress.displayed} · latest #${progress.latest} · lag ${behind}`;
 }
+function markRows() {
+    for (const event of events) {
+        const row = rows.get(event.sequence);
+        if (!row) {
+            continue;
+        }
+        row.classList.toggle("selected", event.sequence === selectedSequence);
+        row.classList.toggle("match", activeComponent !== null && componentOf(event) === activeComponent);
+    }
+}
+function selectEvent(sequence) {
+    selectedSequence = sequence;
+    activeComponent = null;
+    markRows();
+    const event = events.find((item) => item.sequence === sequence);
+    if (event) {
+        void inspector.showEvent(events, event);
+    }
+}
+function selectComponent(id) {
+    const component = COMPONENTS.find((item) => item.id === id);
+    if (!component) {
+        return;
+    }
+    activeComponent = id;
+    markRows();
+    const count = events.filter((event) => componentOf(event) === id).length;
+    void inspector.showComponent(component, count);
+}
 async function start() {
     const attempts = (await (await fetch("/api/attempts")).json());
     if (attempts.length === 0) {
@@ -92,10 +122,9 @@ async function start() {
         return;
     }
     const attemptId = attempts[0].attempt_id;
-    follow(attemptId, {
-        onAccepted: (event, accepted) => onAccepted(attemptId, event, accepted),
-        onProgress,
-    });
+    inspector = new Inspector(attemptId, document.getElementById("inspector"), document.getElementById("state"), document.getElementById("evidence"));
+    buildComponentMap(components, selectComponent);
+    follow(attemptId, { onAccepted, onProgress });
 }
 start().catch((error) => {
     status.textContent = `failed to load timeline: ${String(error)}`;

@@ -59,14 +59,15 @@ class ObservationParityDockerTests(unittest.TestCase):
             events = read_attempt_events(observed_directory)
             self.assertEqual(
                 [event["type"] for event in events],
-                ["attempt_started", "initial_context", "model.start", "model.outcome",
-                 "tool.start", "tool.outcome", "model.start", "model.outcome", "attempt_finished"],
+                ["attempt_started", "initial_context", "phase.enter", "model.start", "model.outcome",
+                 "state", "phase.enter", "tool.start", "tool.outcome", "state",
+                 "phase.enter", "model.start", "model.outcome", "state", "attempt_finished"],
             )
             self.assertEqual(
-                [event.get("operation_id") for event in events[2:8]],
+                [event["operation_id"] for event in events if "operation_id" in event],
                 ["model-1", "model-1", "tool-1-1", "tool-1-1", "model-2", "model-2"],
             )
-            request_artifact = events[2]["artifacts"][0]
+            request_artifact = events[3]["artifacts"][0]
             self.assertEqual(
                 (observed_directory / request_artifact["path"]).read_bytes(),
                 json_artifact(observed_model.requests[0].messages),

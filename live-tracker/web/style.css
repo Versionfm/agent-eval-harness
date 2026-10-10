@@ -4,6 +4,11 @@
   --muted: #6e6e73;
   --line: #d2d2d7;
   --background: #ffffff;
+  --panel: #f5f5f7;
+  --accent: #0a64d6;
+  --selected: #dbeafe;
+  --match: #fef3c7;
+  --warning: #9a3412;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -12,7 +17,24 @@
     --muted: #a1a1a6;
     --line: #3a3a3c;
     --background: #1c1c1e;
+    --panel: #2c2c2e;
+    --accent: #6cb6ff;
+    --selected: #1e3a5f;
+    --match: #4a3b10;
+    --warning: #fdba74;
   }
+}
+
+:root[data-theme="dark"] {
+  --text: #f5f5f7;
+  --muted: #a1a1a6;
+  --line: #3a3a3c;
+  --background: #1c1c1e;
+  --panel: #2c2c2e;
+  --accent: #6cb6ff;
+  --selected: #1e3a5f;
+  --match: #4a3b10;
+  --warning: #fdba74;
 }
 
 body {
@@ -21,6 +43,9 @@ body {
   font: 14px/1.4 system-ui, sans-serif;
   color: var(--text);
   background: var(--background);
+  box-sizing: border-box;
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 h1 {
@@ -28,40 +53,199 @@ h1 {
   margin: 0 0 4px;
 }
 
+h2 {
+  font-size: 15px;
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+
+h3 {
+  font-size: 14px;
+  margin: 14px 0 6px;
+}
+
+h4 {
+  font-size: 13px;
+  margin: 10px 0 4px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 #status {
   margin: 0 0 12px;
   color: var(--muted);
 }
 
-ol {
+.note {
+  color: var(--muted);
+  margin: 4px 0;
+}
+
+.missing {
+  color: var(--muted);
+  font-style: italic;
+}
+
+ol,
+ul {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-li {
+code {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* Layout A: component map | timeline | inspector. Stacks on phone widths. */
+.workbench {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#components {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  align-items: baseline;
-  padding: 6px 0;
+  gap: 6px;
+}
+
+#components button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+#components .count {
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+#timeline-pane,
+#inspector-pane {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--background);
+}
+
+#timeline {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+#timeline li {
   border-bottom: 1px solid var(--line);
 }
 
-.sequence {
+#timeline li.gap {
+  color: var(--muted);
+  font-style: italic;
+  padding: 6px 0;
+}
+
+#timeline button.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: baseline;
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 6px 4px;
+  cursor: pointer;
+}
+
+#timeline li.selected button.row {
+  background: var(--selected);
+}
+
+#timeline li.match button.row {
+  background: var(--match);
+}
+
+#timeline .sequence {
   color: var(--muted);
   min-width: 3em;
 }
 
-.kind {
+#timeline .kind {
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
-.gap {
-  color: var(--muted);
-  font-style: italic;
+#timeline .text {
+  flex: 1 1 12em;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
-code {
+#inspector-pane section + section {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.kv {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.kv .k {
   color: var(--muted);
+}
+
+pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  margin: 4px 0;
+  padding: 8px;
+  background: var(--panel);
+  border-radius: 6px;
+  max-height: 24em;
+  overflow: auto;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+pre.excerpt,
+pre.visible {
+  border-left: 3px solid var(--warning);
+}
+
+.call {
+  border-left: 2px solid var(--line);
+  padding-left: 8px;
+  margin: 6px 0;
+}
+
+#evidence li {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+a {
+  color: var(--accent);
+}
+
+@media (min-width: 900px) {
+  .workbench {
+    grid-template-columns: minmax(10em, 0.8fr) minmax(0, 1.2fr) minmax(0, 1.4fr);
+    align-items: start;
+  }
+
+  #components {
+    flex-direction: column;
+    flex-wrap: nowrap;
+  }
 }
