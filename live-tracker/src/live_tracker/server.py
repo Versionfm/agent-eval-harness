@@ -12,7 +12,7 @@ import time
 from typing import Any, Mapping
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from live_tracker.reader import RecordingError, read_attempt_events
+from live_tracker.reader import read_attempt_history
 from live_tracker.sources import resolve_source
 
 
@@ -127,14 +127,12 @@ class _TrackerHandler(BaseHTTPRequestHandler):
 
     def _summary(self, item: tuple[str, Path]) -> dict[str, Any]:
         attempt_id, directory = item
-        try:
-            events = read_attempt_events(directory)
-        except RecordingError as exc:
-            return {"attempt_id": attempt_id, "recording_error": str(exc)}
+        history = read_attempt_history(directory)
         return {
             "attempt_id": attempt_id,
-            "event_count": len(events),
-            "finished": bool(events) and events[-1]["type"] == "attempt_finished",
+            "event_count": len(history.events),
+            "finished": bool(history.events) and history.events[-1]["type"] == "attempt_finished",
+            "recording": history.status(),
         }
 
     def _cursor(self, attempt_id: str, query: str, latest: int) -> int:
@@ -154,23 +152,22 @@ class _TrackerHandler(BaseHTTPRequestHandler):
         return cursor
 
     def _events(self, attempt_id: str, directory: Path, query: str) -> None:
+        history = read_attempt_history(directory)
         try:
-            events = read_attempt_events(directory)
-            after = self._cursor(attempt_id, query, events[-1]["sequence"] if events else 0)
+            after = self._cursor(attempt_id, query, history.events[-1]["sequence"] if history.events else 0)
         except _Refused as exc:
             return self._json({"error": str(exc)}, exc.status)
-        except RecordingError as exc:
-            return self._json({"error": str(exc)}, 500)
-        self._json({"events": [event for event in events if event["sequence"] > after]})
+        self._json({
+            "events": [event for event in history.events if event["sequence"] > after],
+            "recording": history.status(),
+        })
 
     def _stream(self, attempt_id: str, directory: Path, query: str) -> None:
+        history = read_attempt_history(directory)
         try:
-            events = read_attempt_events(directory)
-            sent = self._cursor(attempt_id, query, events[-1]["sequence"] if events else 0)
+            sent = self._cursor(attempt_id, query, history.events[-1]["sequence"] if history.events else 0)
         except _Refused as exc:
             return self._json({"error": str(exc)}, exc.status)
-        except RecordingError as exc:
-            return self._json({"error": str(exc)}, 500)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -180,25 +177,27 @@ class _TrackerHandler(BaseHTTPRequestHandler):
         observer = _Observer(self, self.buffer_events, self.stall_seconds)
         observer.writer.start()
         reported = None
+        last_status = None
         try:
             while True:
-                try:
-                    events = read_attempt_events(directory)
-                except RecordingError as exc:
-                    observer.offer(_sse({"error": str(exc)}, event="recording-error"))
-                    break
+                history = read_attempt_history(directory)
                 finished = False
-                for event in events:
+                for event in history.events:
                     if event["sequence"] <= sent:
                         continue
                     sent = event["sequence"]
                     observer.offer(_sse(event, event_id=f"{attempt_id}:{sent}"))
                     finished = event["type"] == "attempt_finished"
-                head = events[-1]["sequence"] if events else 0
+                # Recording status follows the events it describes, so a client can close after them.
+                status = history.status()
+                if status != last_status:
+                    last_status = status
+                    observer.offer(_sse(status, event="recording-status"))
+                head = history.events[-1]["sequence"] if history.events else 0
                 if head != reported:
                     reported = head
                     observer.offer(_sse({"latest_sequence": head}, event="head"))
-                if finished:
+                if finished or history.state in {"corrupt", "failed"}:
                     break
                 if observer.gone.is_set():
                     return

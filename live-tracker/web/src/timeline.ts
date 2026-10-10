@@ -2,7 +2,7 @@
 // The saved history plus SSE feed one attempt (connection.ts owns delivery). Evidence is written with textContent only.
 
 import { buildComponentMap, updateComponentCounts } from "./components.js";
-import { Accepted, Progress, follow } from "./connection.js";
+import { Accepted, Progress, Recording, follow } from "./connection.js";
 import { el } from "./dom.js";
 import { Inspector } from "./inspector.js";
 import { COMPONENTS, OPERATION_STARTS, TrackerEvent, componentOf } from "./model.js";
@@ -12,6 +12,11 @@ const status = document.getElementById("status") as HTMLElement;
 const detail = document.getElementById("detail") as HTMLElement;
 const lag = document.getElementById("lag") as HTMLElement;
 const components = document.getElementById("components") as HTMLElement;
+const banner = el("p", "note");
+banner.id = "recording";
+banner.setAttribute("role", "status");
+banner.hidden = true;
+status.after(banner);
 
 let inspector: Inspector;
 const events: TrackerEvent[] = [];
@@ -19,6 +24,32 @@ const rows = new Map<number, HTMLLIElement>();
 let lastSequence = 0;
 let selectedSequence: number | null = null;
 let activeComponent: string | null = null;
+let recording: Recording | null = null;
+
+// Recording completeness is shown apart from the verdict and termination reason.
+function describeRecording(next: Recording): string {
+  const first = next.problems[0];
+  switch (next.state) {
+    case "corrupt":
+      return `Recording is corrupt (${next.problems.length} problem${next.problems.length === 1 ? "" : "s"}; first: ${first?.detail ?? "unknown"}). Damaged records are listed, not skipped.`;
+    case "failed":
+      return `Recording failed while writing ${next.failure?.failed_event_type ?? "an event"}: ${next.failure?.error ?? "unknown error"}. The attempt stopped before its next operation.`;
+    case "interrupted":
+      return `Recording is incomplete: the final record was cut off (${next.torn_tail_bytes} bytes not verified).`;
+    case "open":
+      return "The attempt has not recorded its finish: it is still running, or it stopped without a final record.";
+    default:
+      return "";
+  }
+}
+
+function applyRecording(next: Recording): void {
+  recording = next;
+  const text = describeRecording(next);
+  banner.textContent = text;
+  banner.hidden = text === "";
+  markRows();
+}
 
 function describe(event: TrackerEvent): string {
   const data = event.data;
@@ -112,7 +143,9 @@ function onProgress(progress: Progress): void {
 
 // A start with no recorded outcome is waiting while the attempt runs, and unresolved once it has finished.
 function markRows(): void {
-  const finished = events.some((event) => event.type === "attempt_finished");
+  // A recording that stopped without an outcome can no longer deliver one: its starts are unresolved.
+  const stopped = events.some((event) => event.type === "attempt_finished")
+    || ["failed", "corrupt", "interrupted"].includes(recording?.state ?? "");
   const closed = new Set(
     events.filter((event) => event.operation_id && !OPERATION_STARTS.has(event.type))
       .map((event) => event.operation_id),
@@ -128,7 +161,7 @@ function markRows(): void {
       continue;
     }
     const outcome = closed.has(event.operation_id);
-    const label = outcome ? "" : finished ? "unresolved" : "waiting";
+    const label = outcome ? "" : stopped ? "unresolved" : "waiting";
     row.classList.toggle("unresolved", label === "unresolved");
     row.classList.toggle("waiting", label === "waiting");
     row.querySelector(".operation-status")!.textContent = label;
@@ -170,7 +203,7 @@ async function start(): Promise<void> {
     document.getElementById("evidence") as HTMLElement,
   );
   buildComponentMap(components, selectComponent);
-  follow(attemptId, { onAccepted, onProgress });
+  follow(attemptId, { onAccepted, onProgress, onRecording: applyRecording });
 }
 
 start().catch((error: unknown) => {

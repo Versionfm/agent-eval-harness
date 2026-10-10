@@ -1,7 +1,15 @@
 # Live tracker
 
-Dedicated home for live observation and recorded playback of harness attempts. Specification: [issue #10](https://github.com/Versionfm/agent-eval-harness/issues/10). Status: tickets [#11](https://github.com/Versionfm/agent-eval-harness/issues/11) (one scripted Python attempt observed live), [#13](https://github.com/Versionfm/agent-eval-harness/issues/13) (the workbench: component map, timeline and inspector), [#15](https://github.com/Versionfm/agent-eval-harness/issues/15) (LangGraph node, router and state transitions through the same sink and workbench) and [#17](https://github.com/Versionfm/agent-eval-harness/issues/17) (reconnect, catch-up, bounded delivery and lag) implemented. Recorder failure semantics (#12), mutation capture (#16), playback and legacy adapters (#14) are deferred to the other tickets in #10. The call chain and the selected-point experiment are in [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md).
+Dedicated home for live observation and recorded playback of harness attempts. Specification: [issue #10](https://github.com/Versionfm/agent-eval-harness/issues/10). Status: tickets [#11](https://github.com/Versionfm/agent-eval-harness/issues/11) (one scripted Python attempt observed live), [#12](https://github.com/Versionfm/agent-eval-harness/issues/12) (interrupted recordings and recorder-failure handling), [#13](https://github.com/Versionfm/agent-eval-harness/issues/13) (the workbench: component map, timeline and inspector), [#15](https://github.com/Versionfm/agent-eval-harness/issues/15) (LangGraph node, router and state transitions through the same sink and workbench) and [#17](https://github.com/Versionfm/agent-eval-harness/issues/17) (reconnect, catch-up, bounded delivery and lag) implemented. Playback and legacy adapters (#14), mutation capture (#16) and the live comparison pair (#18) are deferred. The call chain and the selected-point experiment are in [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md).
 
+## Reproduce the recovery behaviors (no provider, no Docker)
+
+```bash
+PYTHONPATH=live-tracker/src python -m live_tracker.recovery_demo
+# prints each synthetic recording's state (complete, interrupted, failed, open, corrupt) and exits 0 when all match
+```
+
+Scenarios: a clean recording; a process death partway through an outcome line (torn tail, no marker); a recorder failure whose marker is saved; a failure where storage also refuses the marker; a damaged middle record.
 ## Open the workbench on a controlled attempt
 
 `--scenario workbench` runs a scripted attempt that exercises every inspector field: a shell output over the model-visible limit containing `<script>` markup, a failing and a succeeding read in one model turn, and a completion with no usage. Use the default `--scenario read` for the one-read attempt described below.
@@ -10,7 +18,7 @@ Dedicated home for live observation and recorded playback of harness attempts. S
 PYTHONPATH=live-tracker/src python -m live_tracker.run_scripted --scenario workbench \
   --admission-evidence <admission.json> --source-repository /path/to/prompt-engineering-group-project
 ```
->
+
 ## Reproduce the observed scripted attempt
 
 Requires Docker and the admitted task environment (see the harness README). Starts the loopback viewer, then runs a scripted model → `read_file` → completion attempt in the real task container, recording every event:
@@ -46,7 +54,7 @@ Delivery design:
 - Catch-up and live share one source: each stream reads the saved log, so history and live events come from the same committed sequence and nothing is lost while the recorder appends.
 - Each connection has its own writer thread and a bounded buffer of 256 frames (`BUFFER_EVENTS`). The reader offers frames and waits up to 5 s (`STALL_SECONDS`) for room; if the buffer stays full, only that socket is cut. The recorder never waits on the server, and the observer resumes from disk with its last cursor.
 - Keepalive comments every 2 s detect a departed browser; the stream asks for a reconnect after 500 ms.
-- A `head` frame reports the latest recorded sequence, so the browser can show lag.
+- A `head` frame reports the latest recorded sequence, so the browser can show lag. A `recording-status` frame (#12) follows each batch of events and carries the recording state.
 - The browser ledger (`web/src/connection.ts`) dedupes by sequence: the same bytes again are silent. Missing sequences are shown as gap rows. A different payload for a displayed sequence, another attempt, or an unknown schema is shown as a conflict, and the feed stops. The state is shown as `live`, `reconnecting`, `refused`, `conflict`, `recording-error` or `finished`. Lag is the latest reported sequence minus the displayed one; while the stream is down the browser polls `/api/attempts` each second, and the detail line says whether the viewer answered.
 
 Tests (`PYTHONPATH=live-tracker/src python -m unittest discover -s live-tracker/tests -t live-tracker/tests`):
@@ -56,13 +64,34 @@ Tests (`PYTHONPATH=live-tracker/src python -m unittest discover -s live-tracker/
 - `test_client_ledger.py`: the compiled ledger under Node, with literal expected results for duplicates, gaps and conflicts. It is skipped if `node` is not on the path.
 - `test_viewer_detach_docker.py` (Docker): a real scripted attempt in the task container; the viewer is closed while the attempt is running, and the attempt must still finish with contiguous events and `result.json`.
 
-Known ceilings (deliberate): the stream re-reads the whole log each 0.2 s tick (`# ponytail:` in `server.py`; an incremental byte-offset tail is the upgrade, deferred because `reader.py` belongs to #12). Buffers count frames, not bytes; events carry previews while large payloads are artifacts. Lag while disconnected uses the list endpoint, not a head endpoint.
+Known ceilings (deliberate): the stream re-reads the whole log each 0.2 s tick (`# ponytail:` in `server.py`; an incremental byte-offset tail is the upgrade). Buffers count frames, not bytes; events carry previews while large payloads are artifacts. Lag while disconnected uses the list endpoint, not a head endpoint.
 
 ## Event boundary
 
 The harness publishes through an optional `event_sink` (`agent_eval_harness/observation.py`) passed to `attempt_and_evaluate`. Without it, behavior is unchanged. The sink receives `attempt_started`, `initial_context`, `model.start`/`model.outcome` (`model-N`), `tool.start`/`tool.outcome` (`tool-N-I`, parent `model-N`) and `attempt_finished` (with the candidate patch). The recorder owns sequence, timestamps, elapsed time and artifact digests. Starts are emitted before the provider or tool call, outside its exception handling, so a failed start stops the attempt before any further operation. Outcomes and artifacts are written and fsynced before the event is appended. Observer data never enters model messages.
 
 Final `result.json` and `report.html` are still written from the in-memory trace after the attempt, next to the append-only `events.jsonl`; the log is never rewritten.
+
+## Recording failure and recovery
+
+- A mandatory write (artifact, event append or fsync) that fails raises `EventRecordingError` to the harness. The harness runs no further model or tool operation, closes the task container, and recovers and scores the candidate that exists. The result carries `recording: {status: "failed", error}`, `termination_reason: harness_error`, and the verdict from that canonical evaluation. Recording status, termination and verdict are reported separately.
+- The recorder then refuses every later event and tries to save `recording-failure.json` (atomic write). If storage refuses the marker, the error still reaches the caller and the marker is not claimed to exist; the saved prefix stays incomplete.
+- The reader (`read_attempt_history`) never writes. It reports one `state`: `complete` (finish recorded), `failed` (marker present), `interrupted` (torn final record: bytes after the last newline are not verified), `open` (no finish, no marker, no torn tail), `corrupt` (problems listed with sequence numbers, such as malformed JSON, schema or sequence mismatch, identity conflicts, missing or damaged artifacts). Damaged records are never skipped: a structural problem ends the verified prefix, and an artifact problem is marked on its event.
+- Unresolved operations (a `*.start` without its outcome) are listed; the browser labels them `unresolved`, or `awaiting outcome` while the attempt is open.
+- Served as `recording` on `/api/attempts` and `/api/attempts/<id>/events`, and as a `recording-status` SSE frame. The browser shows a banner with the state.
+- A recorder never resumes an existing log (`FileExistsError`).
+
+### Supported crash-recovery conditions
+
+Guarantees are for process crashes (an exception, an interrupted or killed Python process) on a local filesystem where a completed `fsync` is durable:
+
+- An artifact is fsynced and renamed into place before the event that references it is appended, and an event is fsynced before `emit` returns. The start record of an operation is durable before the model or tool call starts.
+- A record whose append and fsync completed before the crash is readable; the final unterminated record is reported as interrupted, never as evidence.
+- Recovery is reading only. To continue, start a new attempt; nothing is resumed or re-executed.
+
+Not claimed: power loss, kernel or hardware faults, filesystems or network mounts without fsync durability, or concurrent writers other than the one recorder. Measured overhead is out of scope for this ticket.
+
+Fault injection goes through the recorder boundary: `FaultyStorage(kind, event_type, occurrence=, tear=, fail_marker=)` replaces the durable storage. The Docker tests (`tests/test_recording_faults_docker.py`) inject failures into real scripted attempts and check that no later model or tool operation runs.
 
 ## LangGraph node transitions (#15)
 
@@ -90,9 +119,10 @@ Measured once with 3 repeats (Docker, `workbench` scenario, both attempts `agent
 
 - Implemented: the sink contract on the Python loop; durable recorder with contiguous sequences and content-addressed artifacts; reader that ignores only an unterminated final record and raises on corruption; loopback server (`/`, `/static`, `/api/attempts`, events with `after`, confined artifacts, SSE with `Last-Event-ID` resume); minimal TypeScript timeline; the scripted runner; observation-on/off parity test; system-Chrome browser test.
 - Implemented in #13: `phase.enter` (module:function source identity) and `state` events from the Python loop, registered source identities with `/api/sources`, the workbench (component map, timeline, inspector with selected-point state and labelled excerpts), the `workbench` scripted scenario and a system-Chrome acceptance test against a Docker attempt (`tests/test_timeline_browser_docker.py`, which keeps its #11 file name).
+- Implemented in #12: torn-tail, unresolved-operation, damaged-record and recorder-failure states in the reader, server and browser; the harness stop-on-recording-failure with separate recording status; the no-provider demo; fault-injection tests through real attempts; the Chrome recovery test.
 - Implemented in #17: cursor refusals, catch-up and handoff, client dedupe and gaps, bounded per-connection buffering with slow-consumer disconnect, connection state and lag (see above).
 - Implemented in #15: `node.enter`, `node.outcome`, `route.decision` and graph `state` events from `run_attempt_graph`; the LangGraph component entries (model node, tool node, router) with registered source links; `run_scripted --orchestrator langgraph`; the LangGraph Docker parity, browser and overhead checks described above. The sink is no longer refused for `langgraph`.
-- Deferred: mutation capture (#16), recording-failure recovery scenarios (#12), legacy recording adapters and playback controls (#14), and provider streaming. Evaluation and report phases are not yet phase events. The report is not yet re-rendered from the log (#14).
+- Deferred: mutation capture (#16), legacy recording adapters and playback controls (#14), provider streaming, evaluation and report phase events, and a recording-status line in the static HTML report (the report shows only the harness error). The report is not yet re-rendered from the log (#14).
 
 Read the [published tickets](docs/TICKETS.md), [specification](docs/SPEC.md), [design](docs/DESIGN.md), [learning sequence](docs/LEARNING_PLAN.md) and [decision interview](../docs/observability-interview.md). The disposable [layout prototype](../../harness-viewer-prototype.html?variant=A) is outside the production source tree. Its original builder/template and verdict are captured on local branch `prototype/live-tracker-layout` at `0024ce6243b62b31b2f6121758d2bbb0e9a44bb0`; this throwaway branch has not been pushed.
 

@@ -18,7 +18,7 @@ import tempfile
 import time
 from typing import Any
 
-from live_tracker.reader import read_attempt_events
+from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder
 from live_tracker.run_scripted import SCENARIOS, run_attempt
 
@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
                         "wall_seconds": round(wall, 4),
                         "termination_reason": result["termination_reason"],
                         "functional_verdict": result["functional_verdict"],
-                        "events": len(read_attempt_events(directory)) if observed else 0,
+                        "events": len(read_attempt_history(directory).events) if observed else 0,
                         "emit_seconds": round(sink.emit_seconds, 4) if sink else 0.0,
                         "emit_count": sink.emit_count if sink else 0,
                         "recorded_bytes": _directory_bytes(directory) if observed else 0,

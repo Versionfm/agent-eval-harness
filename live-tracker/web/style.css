@@ -263,3 +263,19 @@ a {
     flex-wrap: nowrap;
   }
 }
+
+#recording {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.operation-state {
+  font-style: italic;
+  color: var(--muted);
+}
+
+li[data-operation] .operation-state:not(:empty) {
+  color: var(--text);
+}

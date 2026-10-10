@@ -87,9 +87,13 @@ export function follow(attemptId, handlers) {
         latest = Math.max(latest, JSON.parse(message.data).latest_sequence);
         report("live");
     });
-    source.addEventListener("recording-error", (message) => {
-        source.close();
-        report("recording-error", JSON.parse(message.data).error);
+    source.addEventListener("recording-status", (message) => {
+        const recording = JSON.parse(message.data);
+        handlers.onRecording(recording);
+        if (recording.state === "failed" || recording.state === "corrupt") {
+            source.close();
+            report("recording-error", recording.failure?.error ?? recording.problems[0]?.detail ?? "recording stopped");
+        }
     });
     source.onerror = () => {
         if (source.readyState === EventSource.CLOSED) {

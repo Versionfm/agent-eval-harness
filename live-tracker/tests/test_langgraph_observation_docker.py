@@ -12,7 +12,7 @@ from pathlib import Path
 
 from agent_eval_harness.attempt import AdmittedTask, AttemptBudgets, attempt_and_evaluate
 from agent_eval_harness.model import ModelConfig, ModelResponse, RequestBudgetExceeded, ScriptedModel, ToolCall
-from live_tracker.reader import read_attempt_events
+from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder
 
 
@@ -115,7 +115,7 @@ class LangGraphObservationDockerTests(unittest.TestCase):
                         orchestrator=orchestrator,
                         **kwargs,
                     )
-                    events = read_attempt_events(directory) if observed else []
+                    events = read_attempt_history(directory).events if observed else []
                     runs[label] = (result, model, events)
         return runs
 

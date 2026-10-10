@@ -25,6 +25,7 @@ from agent_eval_harness.attempt import (
 )
 from agent_eval_harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
 from agent_eval_harness.observation import AttemptEventSink
+from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder
 from live_tracker.server import make_server
 
@@ -129,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
         "checks": result["evaluation"].get("checks", {}),
         "artifact_directory": str(output_dir),
         "error": result.get("harness_error", result["evaluation"].get("error")),
+        # Recording completeness is reported apart from the termination reason and verdict.
+        "recording": read_attempt_history(output_dir).status(),
     }
     print(json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True), flush=True)
     try:

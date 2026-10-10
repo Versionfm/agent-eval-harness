@@ -17,6 +17,10 @@ def json_artifact(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=_json_default).encode("utf-8")
 
 
+class EventRecordingError(RuntimeError):
+    """A mandatory event could not be recorded. The harness must not run another operation."""
+
+
 class AttemptEventSink(Protocol):
     def emit(
         self,

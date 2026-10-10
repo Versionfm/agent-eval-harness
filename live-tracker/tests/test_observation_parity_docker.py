@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from agent_eval_harness.observation import json_artifact
-from live_tracker.reader import read_attempt_events
+from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder
 from live_tracker.run_scripted import read_then_complete_model, run_attempt
 
@@ -56,7 +56,9 @@ class ObservationParityDockerTests(unittest.TestCase):
             self.assertEqual(observed["termination_reason"], "agent_completed")
             self.assertIn(observed["functional_verdict"], {"failure", "success"})
 
-            events = read_attempt_events(observed_directory)
+            history = read_attempt_history(observed_directory)
+            self.assertEqual(history.state, "complete")
+            events = history.events
             self.assertEqual(
                 [event["type"] for event in events],
                 ["attempt_started", "initial_context", "phase.enter", "model.start", "model.outcome",

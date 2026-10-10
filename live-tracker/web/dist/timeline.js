@@ -10,12 +10,41 @@ const status = document.getElementById("status");
 const detail = document.getElementById("detail");
 const lag = document.getElementById("lag");
 const components = document.getElementById("components");
+const banner = el("p", "note");
+banner.id = "recording";
+banner.setAttribute("role", "status");
+banner.hidden = true;
+status.after(banner);
 let inspector;
 const events = [];
 const rows = new Map();
 let lastSequence = 0;
 let selectedSequence = null;
 let activeComponent = null;
+let recording = null;
+// Recording completeness is shown apart from the verdict and termination reason.
+function describeRecording(next) {
+    const first = next.problems[0];
+    switch (next.state) {
+        case "corrupt":
+            return `Recording is corrupt (${next.problems.length} problem${next.problems.length === 1 ? "" : "s"}; first: ${first?.detail ?? "unknown"}). Damaged records are listed, not skipped.`;
+        case "failed":
+            return `Recording failed while writing ${next.failure?.failed_event_type ?? "an event"}: ${next.failure?.error ?? "unknown error"}. The attempt stopped before its next operation.`;
+        case "interrupted":
+            return `Recording is incomplete: the final record was cut off (${next.torn_tail_bytes} bytes not verified).`;
+        case "open":
+            return "The attempt has not recorded its finish: it is still running, or it stopped without a final record.";
+        default:
+            return "";
+    }
+}
+function applyRecording(next) {
+    recording = next;
+    const text = describeRecording(next);
+    banner.textContent = text;
+    banner.hidden = text === "";
+    markRows();
+}
 function describe(event) {
     const data = event.data;
     switch (event.type) {
@@ -101,7 +130,9 @@ function onProgress(progress) {
 }
 // A start with no recorded outcome is waiting while the attempt runs, and unresolved once it has finished.
 function markRows() {
-    const finished = events.some((event) => event.type === "attempt_finished");
+    // A recording that stopped without an outcome can no longer deliver one: its starts are unresolved.
+    const stopped = events.some((event) => event.type === "attempt_finished")
+        || ["failed", "corrupt", "interrupted"].includes(recording?.state ?? "");
     const closed = new Set(events.filter((event) => event.operation_id && !OPERATION_STARTS.has(event.type))
         .map((event) => event.operation_id));
     for (const event of events) {
@@ -115,7 +146,7 @@ function markRows() {
             continue;
         }
         const outcome = closed.has(event.operation_id);
-        const label = outcome ? "" : finished ? "unresolved" : "waiting";
+        const label = outcome ? "" : stopped ? "unresolved" : "waiting";
         row.classList.toggle("unresolved", label === "unresolved");
         row.classList.toggle("waiting", label === "waiting");
         row.querySelector(".operation-status").textContent = label;
@@ -149,7 +180,7 @@ async function start() {
     const attemptId = attempts[0].attempt_id;
     inspector = new Inspector(attemptId, document.getElementById("inspector"), document.getElementById("state"), document.getElementById("evidence"));
     buildComponentMap(components, selectComponent);
-    follow(attemptId, { onAccepted, onProgress });
+    follow(attemptId, { onAccepted, onProgress, onRecording: applyRecording });
 }
 start().catch((error) => {
     status.textContent = `failed to load timeline: ${String(error)}`;

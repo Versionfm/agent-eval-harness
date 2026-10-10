@@ -10,7 +10,7 @@ The last row shows the final state, which is only reached after attempt_finished
 import sys
 from pathlib import Path
 
-from live_tracker.reader import read_attempt_events
+from live_tracker.reader import read_attempt_history
 
 
 def selected_state(events, sequence):
@@ -24,7 +24,7 @@ def selected_state(events, sequence):
 
 
 def main(argv):
-    events = read_attempt_events(Path(argv[1]))
+    events = read_attempt_history(Path(argv[1])).events
     print("| selected | event | model calls | context bytes | tool result messages | state from |")
     print("|---:|---|---:|---:|---:|---|")
     rows = []

@@ -5,7 +5,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from live_tracker.recorder import AttemptRecorder
+from live_tracker.recorder import AttemptRecorder, FaultyStorage
 from live_tracker.server import make_server
 
 
@@ -22,7 +22,17 @@ class LoopbackServerTests(unittest.TestCase):
                       operation_id="tool-1-1")
         recorder.emit("attempt_finished", {"functional_verdict": "failure"})
         self.attempt_id = recorder.attempt_id
-        self.server = make_server({self.attempt_id: self.attempt_dir}, port=0)
+
+        # A recorder that fails on the tool outcome leaves a failed, unresolved prefix.
+        self.failed_dir = root / "failed"
+        failing = AttemptRecorder(self.failed_dir, attempt_id="att2",
+                                  storage=FaultyStorage("log", "tool.outcome"))
+        failing.emit("attempt_started", {"task_id": "t"})
+        failing.emit("tool.start", {"tool_name": "read_file"}, operation_id="tool-1-1")
+        with self.assertRaises(RuntimeError):
+            failing.emit("tool.outcome", {}, operation_id="tool-1-1")
+
+        self.server = make_server({self.attempt_id: self.attempt_dir, "att2": self.failed_dir}, port=0)
         self.port = self.server.server_address[1]
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
@@ -39,18 +49,31 @@ class LoopbackServerTests(unittest.TestCase):
         connection.close()
         return response.status, response.getheader("Content-Type"), body
 
-    def test_lists_events_after_a_cursor_and_serves_only_registered_artifacts(self):
+    def test_lists_events_after_a_cursor_with_recording_status_and_serves_only_registered_artifacts(self):
         status, _, body = self._get("/api/attempts")
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)[0]["attempt_id"], self.attempt_id)
+        summaries = {item["attempt_id"]: item for item in json.loads(body)}
+        self.assertEqual(summaries[self.attempt_id]["recording"]["state"], "complete")
+        self.assertEqual(summaries["att2"]["recording"]["state"], "failed")
 
         status, _, body = self._get(f"/api/attempts/{self.attempt_id}/events?after=1")
         self.assertEqual(status, 200)
-        self.assertEqual([event["sequence"] for event in json.loads(body)["events"]], [2, 3])
+        payload = json.loads(body)
+        self.assertEqual([event["sequence"] for event in payload["events"]], [2, 3])
+        self.assertEqual(payload["recording"]["state"], "complete")
 
-        artifact = json.loads(self._get(f"/api/attempts/{self.attempt_id}/events")[2])["events"][1]["artifacts"][0]
+        history = json.loads(self._get(f"/api/attempts/{self.attempt_id}/events")[2])
+        artifact = history["events"][1]["artifacts"][0]
+        self.assertEqual(artifact["integrity"], "ok")
         status, _, body = self._get(f"/api/attempts/{self.attempt_id}/artifacts/{artifact['path']}")
         self.assertEqual((status, body), (200, b"full output"))
+
+        failed = json.loads(self._get("/api/attempts/att2/events")[2])
+        self.assertEqual(failed["recording"]["state"], "failed")
+        self.assertEqual(failed["recording"]["unresolved_operations"], ["tool-1-1"])
+
+        status, _, _ = self._get(f"/api/attempts/{self.attempt_id}/events?after=x")
+        self.assertEqual(status, 400)
 
         escapes = [
             f"/api/attempts/{self.attempt_id}/artifacts/../../secret.txt",
@@ -69,13 +92,22 @@ class LoopbackServerTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(content_type, "text/event-stream")
-        # retry: and head frames are control frames; only attempt events carry an id.
-        frames = [frame for frame in body.decode("utf-8").split("\n\n") if frame.startswith("id: ")]
+        frames = [frame for frame in body.decode("utf-8").split("\n\n") if frame.strip()]
+        event_frames = [frame for frame in frames if "event: attempt-event" in frame]
         self.assertEqual(
-            [frame.splitlines()[0] for frame in frames],
+            [frame.splitlines()[0] for frame in event_frames],
             [f"id: {self.attempt_id}:2", f"id: {self.attempt_id}:3"],
         )
-        self.assertIn("attempt_finished", frames[-1])
+        self.assertIn("attempt_finished", event_frames[-1])
+        status_frames = [frame for frame in frames if "event: recording-status" in frame]
+        self.assertIn('"state": "complete"', status_frames[-1])
+
+    def test_stream_reports_a_failed_recording_and_closes_without_waiting_for_a_finish(self):
+        status, _, body = self._get("/api/attempts/att2/stream")
+        self.assertEqual(status, 200)
+        frames = [frame for frame in body.decode("utf-8").split("\n\n") if frame.strip()]
+        status_frames = [frame for frame in frames if "event: recording-status" in frame]
+        self.assertIn('"state": "failed"', status_frames[-1])
 
 
     def test_serves_only_registered_source_identities(self):

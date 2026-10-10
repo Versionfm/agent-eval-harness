@@ -13,6 +13,16 @@ export interface TrackerEvent {
   artifacts: { role: string; path: string; bytes: number; sha256: string }[];
 }
 
+// Recording completeness as the server reads it: separate from the termination reason and verdict.
+export interface Recording {
+  state: "empty" | "open" | "interrupted" | "complete" | "failed" | "corrupt";
+  verified_events: number;
+  torn_tail_bytes: number;
+  unresolved_operations: string[];
+  problems: { kind: string; sequence: number | null; detail: string }[];
+  failure: { error: string; failed_event_type?: string } | null;
+}
+
 export type Accepted =
   | { kind: "new"; gap?: [number, number] }
   | { kind: "duplicate" }
@@ -30,6 +40,7 @@ export interface Progress {
 export interface FeedHandlers {
   onAccepted(event: TrackerEvent, accepted: Accepted): void;
   onProgress(progress: Progress): void;
+  onRecording(recording: Recording): void;
 }
 
 const SCHEMA = "agent-eval-harness/attempt-events";
@@ -126,9 +137,13 @@ export function follow(attemptId: string, handlers: FeedHandlers): void {
     latest = Math.max(latest, (JSON.parse((message as MessageEvent).data) as { latest_sequence: number }).latest_sequence);
     report("live");
   });
-  source.addEventListener("recording-error", (message) => {
-    source.close();
-    report("recording-error", (JSON.parse((message as MessageEvent).data) as { error: string }).error);
+  source.addEventListener("recording-status", (message) => {
+    const recording = JSON.parse((message as MessageEvent).data) as Recording;
+    handlers.onRecording(recording);
+    if (recording.state === "failed" || recording.state === "corrupt") {
+      source.close();
+      report("recording-error", recording.failure?.error ?? recording.problems[0]?.detail ?? "recording stopped");
+    }
   });
   source.onerror = () => {
     if (source.readyState === EventSource.CLOSED) {
