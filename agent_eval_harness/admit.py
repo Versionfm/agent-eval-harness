@@ -15,8 +15,12 @@ import subprocess
 import sys
 import tarfile
 from typing import Any
+import uuid
 
-from agent_eval_harness.admission import CHECK_IDS, VARIANT_NAMES, assess_admission
+from agent_eval_harness.admission import (
+    CHECK_IDS, VARIANT_NAMES, assess_admission, task_package_evidence,
+)
+from agent_eval_harness.environment import _force_remove_container, run_canonical_checks
 from agent_eval_harness.paths import orchestration_root
 
 
@@ -35,8 +39,9 @@ CONTAINER_CONFIGURATION = {
     "pids_limit": 64,
     "mounts": [
         {"source_role": "task_repository", "target": "/task", "read_only": True},
-        {"source_role": "canonical_evaluator", "target": "/evaluator", "read_only": True},
     ],
+    "evaluator_mount_present": False,
+    "canonical_assertions_run_by": "outer harness process",
     "credentials_or_container_socket_mounted": False,
 }
 
@@ -139,7 +144,8 @@ def prepare_variants(source_repository: Path, output_dir: Path, manifest: dict[s
 
 
 def _build_environment(manifest: dict[str, Any]) -> dict[str, str]:
-    image_tag = "agent-eval-harness/ml-tutor-admission:1.0.0"
+    # Avoid retagging an admission image that another worktree is evaluating.
+    image_tag = f"agent-eval-harness/ml-tutor-admission:{uuid.uuid4().hex}"
     build = _run([
         "docker", "build", "--network=none", "--pull=false", "--tag", image_tag,
         "--file", str(TASK_ROOT / "environment" / "Dockerfile"),
@@ -154,14 +160,18 @@ def _build_environment(manifest: dict[str, Any]) -> dict[str, str]:
         _run(["docker", "version", "--format", "{{.Server.Version}}"]),
         "Docker server version query",
     )
-    version = _require_success(
-        _run([
-            "docker", "run", "--rm", "--pull=never", "--network=none", "--read-only",
-            "--tmpfs", "/tmp:rw,noexec,nosuid,mode=1777,size=16m",
-            image_tag, "python", "-c", "import platform; print(platform.python_version())",
-        ]),
-        "Prepared Python runtime probe",
-    )
+    probe_name = f"agent-eval-admission-runtime-{os.getpid()}-{os.urandom(4).hex()}"
+    try:
+        probe = _run([
+            "docker", "run", "--rm", "--name", probe_name, "--pull=never",
+            "--network=none", "--read-only", "--tmpfs",
+            "/tmp:rw,noexec,nosuid,mode=1777,size=16m", image_tag, "python", "-c",
+            "import platform; print(platform.python_version())",
+        ])
+    except EnvironmentFailure:
+        _force_remove_container(probe_name)
+        raise
+    version = _require_success(probe, "Prepared Python runtime probe")
     expected_version = manifest["environment"]["runtime"].removeprefix("Python ")
     if version != expected_version:
         raise EnvironmentFailure(f"Prepared Python runtime was {version}; expected {expected_version}.")
@@ -181,38 +191,17 @@ def _build_environment(manifest: dict[str, Any]) -> dict[str, str]:
 def _run_canonical_checks(
     image_tag: str, task_copy: Path, check_version: str, expected_python_version: str
 ) -> dict[str, Any]:
-    command = [
-        "docker", "run", "--rm", "--pull=never", "--network=none", "--read-only",
-        "--tmpfs", TMPFS_CONFIGURATION,
-        "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=64",
-        "--mount", f"type=bind,source={task_copy.resolve()},target=/task,readonly",
-        "--mount", f"type=bind,source={(TASK_ROOT / 'curator').resolve()},target=/evaluator,readonly",
-        "--workdir", "/task",
-        "--env", "PYTHONPATH=/task",
-        "--env", "PYTHONDONTWRITEBYTECODE=1",
-        image_tag, "python", "/evaluator/checks.py",
-    ]
-    result = _run(command, timeout=60)
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "no evaluator output").strip()
-        return {"status": "error", "checks": {}, "error": detail[-2000:]}
-    try:
-        payload = json.loads(result.stdout.strip())
-    except json.JSONDecodeError as exc:
-        return {
-            "status": "error",
-            "checks": {},
-            "error": f"Canonical runner returned invalid JSON: {exc}",
-            "stdout": result.stdout[-2000:],
-        }
-    if payload.get("python_version") != expected_python_version:
-        return {
-            "status": "error", "checks": {},
-            "error": f"Check runner used Python {payload.get('python_version')!r}.",
-        }
-    payload["check_version"] = check_version
-    payload["container_configuration"] = CONTAINER_CONFIGURATION
-    return payload
+    result = run_canonical_checks(
+        image_tag,
+        task_copy,
+        TASK_ROOT / "curator",
+        expected_python_version,
+        timeout_seconds=60,
+    )
+    result["check_version"] = check_version
+    if "container_configuration" not in result:
+        result["container_configuration"] = CONTAINER_CONFIGURATION
+    return result
 
 
 def _invalid_runs(message: str) -> dict[str, dict[str, Any]]:
@@ -233,6 +222,7 @@ def run_admission(source_repository: Path, output_dir: Path) -> dict[str, Any]:
         "task_version": manifest["task_version"],
         "acceptance_check_version": manifest["acceptance_check_version"],
         "source_revision": manifest["source"]["revision"],
+        "task_package": task_package_evidence(TASK_ROOT, manifest),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "manifest": str(MANIFEST_PATH.relative_to(REPOSITORY_ROOT)),
         "public_task": str((TASK_ROOT / manifest["files"]["public_task"]).relative_to(REPOSITORY_ROOT)),
@@ -332,7 +322,7 @@ def render_summary(result: dict[str, Any]) -> str:
     <dt>Runtime</dt><dd>{runtime}</dd>
     <dt>Docker server</dt><dd>{docker_version}</dd>
     <dt>Docker image ID</dt><dd><code>{image_id}</code></dd>
-    <dt>Isolation</dt><dd>Network disabled; read-only task and evaluator mounts; read-only container root; no credentials or Docker socket mounted.</dd>
+    <dt>Isolation</dt><dd>Candidate worker has a read-only task mount and no evaluator mount; canonical assertions run in the outer harness after it exits. Networking is disabled; container root is read-only; no credentials or Docker socket are mounted.</dd>
     <dt>Generated</dt><dd>{html.escape(result.get('generated_at', 'unknown'))}</dd>
   </dl>
   {error_html}

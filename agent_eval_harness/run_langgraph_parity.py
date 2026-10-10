@@ -18,6 +18,7 @@ from agent_eval_harness.attempt import (
     REPOSITORY_ROOT,
     attempt_and_evaluate,
 )
+from agent_eval_harness.admission import task_package_evidence
 from agent_eval_harness.model import ModelConfig, ModelResponse, ScriptedModel, ToolCall
 
 
@@ -133,6 +134,12 @@ def _comparison(
             all(python_result["evaluation"].get("checks", {}).values())
             and all(graph_result["evaluation"].get("checks", {}).values())
         ),
+        "harness_provenance_matches": (
+            python_result["metadata"].get("harness_revision")
+            == graph_result["metadata"].get("harness_revision")
+            and python_result["metadata"].get("dependency_versions")
+            == graph_result["metadata"].get("dependency_versions")
+        ),
     }
     if expected_step_budget:
         checks.update({
@@ -165,6 +172,8 @@ def _comparison(
             "graph_step_count": None,
             "artifact_directory": str(Path(python_result["metadata"]["attempt_repository"]).parent),
             "tool_actions": _tool_actions(python_result),
+            "harness_revision": python_result["metadata"].get("harness_revision"),
+            "dependency_versions": python_result["metadata"].get("dependency_versions"),
         },
         "langgraph": {
             "termination_reason": graph_result["termination_reason"],
@@ -175,6 +184,8 @@ def _comparison(
             "graph_step_limit_source": graph_result["metadata"].get("graph_step_limit_source"),
             "artifact_directory": str(Path(graph_result["metadata"]["attempt_repository"]).parent),
             "tool_actions": _tool_actions(graph_result),
+            "harness_revision": graph_result["metadata"].get("harness_revision"),
+            "dependency_versions": graph_result["metadata"].get("dependency_versions"),
         },
     }
 
@@ -188,12 +199,20 @@ def run_experiment(task: AdmittedTask, output_directory: Path) -> dict[str, Any]
         "error-recovery-budget": (_recovery_scenario(), "model_call_budget", False),
         "graph-step-budget": (_graph_step_budget_scenario(), "graph_step_budget", True),
     }
+    task_package = task.evaluator_directory.parent
+    manifest = json.loads((task_package / "manifest.json").read_text(encoding="utf-8"))
+    task_fingerprint = task_package_evidence(task_package, manifest)
     experiment: dict[str, Any] = {
         "schema_version": "1",
         "task_id": task.task_id,
+        "task_version": task.task_version,
         "source_revision": task.source_revision,
+        "acceptance_check_version": task.acceptance_check_version,
+        "task_identity": task_fingerprint["identity"],
+        "task_package_sha256": task_fingerprint["sha256"],
         "model": "scripted parity fixture; no live inference",
         "scenarios": {},
+        "attempt_provenance": {},
     }
     for scenario, ((responses, budgets), expected_termination, expected_step_budget) in scenarios.items():
         python_result, python_model = _run_attempt(
@@ -219,6 +238,16 @@ def run_experiment(task: AdmittedTask, output_directory: Path) -> dict[str, Any]
             expected_step_budget=expected_step_budget,
         )
         experiment["scenarios"][scenario] = comparison
+        experiment["attempt_provenance"][scenario] = {
+            "python-loop": {
+                "harness_revision": comparison["python_loop"]["harness_revision"],
+                "dependency_versions": comparison["python_loop"]["dependency_versions"],
+            },
+            "langgraph": {
+                "harness_revision": comparison["langgraph"]["harness_revision"],
+                "dependency_versions": comparison["langgraph"]["dependency_versions"],
+            },
+        }
 
     experiment["passed"] = all(
         all(scenario["checks"].values()) for scenario in experiment["scenarios"].values()

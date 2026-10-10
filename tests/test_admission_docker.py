@@ -41,6 +41,15 @@ class DockerAdmissionOutcomeTests(unittest.TestCase):
         self.assertEqual(result["container_configuration"]["network_mode"], "none")
         self.assertTrue(result["container_configuration"]["root_filesystem_read_only"])
         self.assertFalse(result["container_configuration"]["credentials_or_container_socket_mounted"])
+        self.assertFalse(result["container_configuration"]["evaluator_mount_present"])
+        self.assertEqual(
+            result["container_configuration"]["mounts"],
+            [{"source_role": "task_repository", "target": "/task", "read_only": True}],
+        )
+        self.assertEqual(
+            result["task_package"]["identity"]["acceptance_check_version"],
+            "1.0.0",
+        )
 
 
 if __name__ == "__main__":

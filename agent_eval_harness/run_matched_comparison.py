@@ -19,8 +19,11 @@ from agent_eval_harness.attempt import (
     ModelConfig,
     ORCHESTRATION_ROOT,
     REPOSITORY_ROOT,
+    _dependency_versions,
+    _harness_provenance,
     attempt_and_evaluate,
 )
+from agent_eval_harness.admission import task_package_evidence
 from agent_eval_harness.compare_report import build_comparison_report
 from agent_eval_harness.deepseek import (
     DEFAULT_BASE_URL,
@@ -56,6 +59,7 @@ REQUIRED_PARITY_CHECKS = {
         "tool_actions_match",
         "canonical_checks_match",
         "both_canonical_evaluations_pass",
+        "harness_provenance_matches",
         "model_request_histories_match",
         "termination_matches",
         "model_call_count_matches",
@@ -67,6 +71,7 @@ REQUIRED_PARITY_CHECKS = {
         "tool_actions_match",
         "canonical_checks_match",
         "both_canonical_evaluations_pass",
+        "harness_provenance_matches",
         "model_request_histories_match",
         "termination_matches",
         "model_call_count_matches",
@@ -78,6 +83,7 @@ REQUIRED_PARITY_CHECKS = {
         "tool_actions_match",
         "canonical_checks_match",
         "both_canonical_evaluations_pass",
+        "harness_provenance_matches",
         "graph_stops_on_its_node_budget",
         "python_loop_does_not_consume_graph_budget",
         "partial_graph_candidate_passes",
@@ -108,6 +114,16 @@ def _validate_parity_evidence(path: Path, task: AdmittedTask) -> dict[str, Any]:
         raise ValueError("scripted parity evidence belongs to a different task")
     if evidence.get("source_revision") != task.source_revision:
         raise ValueError("scripted parity evidence uses a different source revision")
+    task_package = task.evaluator_directory.parent
+    manifest = json.loads((task_package / "manifest.json").read_text(encoding="utf-8"))
+    fingerprint = task_package_evidence(task_package, manifest)
+    if (
+        evidence.get("task_version") != task.task_version
+        or evidence.get("acceptance_check_version") != task.acceptance_check_version
+        or evidence.get("task_identity") != fingerprint["identity"]
+        or evidence.get("task_package_sha256") != fingerprint["sha256"]
+    ):
+        raise ValueError("scripted parity evidence uses a different task fingerprint or check version")
     scenarios = evidence.get("scenarios")
     if not isinstance(scenarios, dict) or not REQUIRED_PARITY_SCENARIOS <= set(scenarios):
         raise ValueError("scripted parity evidence is missing a required scenario")
@@ -117,6 +133,29 @@ def _validate_parity_evidence(path: Path, task: AdmittedTask) -> dict[str, Any]:
                 or not REQUIRED_PARITY_CHECKS[name] <= set(checks)
                 or any(value is not True for value in checks.values())):
             raise ValueError(f"scripted parity evidence has failed or missing checks in {name}")
+        attempts = evidence.get("attempt_provenance", {}).get(name)
+        if not isinstance(attempts, dict):
+            raise ValueError(f"scripted parity evidence is missing attempt provenance in {name}")
+        python_provenance = attempts.get("python-loop")
+        graph_provenance = attempts.get("langgraph")
+        if not isinstance(python_provenance, dict) or not isinstance(graph_provenance, dict):
+            raise ValueError(f"scripted parity evidence is missing an orchestrator provenance in {name}")
+        dependencies = python_provenance.get("dependency_versions")
+        if (
+            not isinstance(dependencies, dict) or not dependencies
+            or any(not isinstance(key, str) or not key or not isinstance(value, str) or not value
+                   for key, value in dependencies.items())
+            or dependencies != graph_provenance.get("dependency_versions")
+            or dependencies != _dependency_versions()
+        ):
+            raise ValueError(f"scripted parity evidence has mismatched dependency provenance in {name}")
+        harness = python_provenance.get("harness_revision")
+        if (
+            not isinstance(harness, dict)
+            or harness != graph_provenance.get("harness_revision")
+            or harness != _harness_provenance()
+        ):
+            raise ValueError(f"scripted parity evidence has mismatched harness provenance in {name}")
     return evidence
 
 
@@ -168,6 +207,13 @@ def _attempt_is_measurement(result: dict[str, Any]) -> tuple[bool, str | None]:
         return False, f"attempt_terminated_{termination}"
     if result.get("functional_verdict") == "invalid_environment":
         return False, "attempt_environment_invalid"
+    if evaluation.get("status") == "invalid_patch":
+        if (
+            result.get("functional_verdict") == "failure"
+            and result.get("failure_category") == "invalid_patch"
+        ):
+            return True, None
+        return False, "invalid_patch_verdict_inconsistent"
     if evaluation.get("status") != "completed":
         return False, "canonical_evaluation_incomplete"
     if result.get("functional_verdict") not in {"success", "failure"}:
@@ -181,6 +227,8 @@ def _configuration_matches(python_result: dict[str, Any], graph_result: dict[str
     fields = (
         ("task_id", "task id"),
         ("task_version", "task version"),
+        ("task_identity", "task identity"),
+        ("task_package_sha256", "task package fingerprint"),
         ("source_revision", "source revision"),
         ("acceptance_check_version", "acceptance checks"),
         ("provider", "provider"),
@@ -188,6 +236,7 @@ def _configuration_matches(python_result: dict[str, Any], graph_result: dict[str
         ("provider_endpoint", "provider endpoint"),
         ("model_settings", "model settings"),
         ("dependency_versions", "dependency versions"),
+        ("harness_revision", "harness revision"),
         ("budgets", "attempt budgets"),
         ("pricing_source_url", "pricing source"),
         ("pricing_source_checked_at", "pricing source date"),
@@ -197,10 +246,36 @@ def _configuration_matches(python_result: dict[str, Any], graph_result: dict[str
     mismatches = []
     for key, label in fields:
         left_value, right_value = left.get(key), right.get(key)
-        if key == "dependency_versions" and left_value is None and right_value is None:
-            # Older attempt writers omit this field; the report still marks the
-            # dimension unavailable. Once recorded, the versions must match.
+        if key == "dependency_versions":
+            left_valid = (
+                isinstance(left_value, dict) and bool(left_value)
+                and all(isinstance(name, str) and name and isinstance(version, str) and version
+                        for name, version in left_value.items())
+            )
+            right_valid = (
+                isinstance(right_value, dict) and bool(right_value)
+                and all(isinstance(name, str) and name and isinstance(version, str) and version
+                        for name, version in right_value.items())
+            )
+            if not left_valid or not right_valid or left_value != right_value:
+                mismatches.append(label)
             continue
+        if key == "harness_revision":
+            def valid_revision(value: Any) -> bool:
+                if not isinstance(value, dict):
+                    return False
+                commit = value.get("commit")
+                state = value.get("working_tree")
+                fingerprint = value.get("working_tree_sha256")
+                if not isinstance(commit, str) or not commit or state not in {"clean", "dirty"}:
+                    return False
+                if state == "dirty":
+                    return isinstance(fingerprint, str) and len(fingerprint) == 64
+                return fingerprint is None
+
+            if not valid_revision(left_value) or not valid_revision(right_value):
+                mismatches.append(label)
+                continue
         if (left_value in (None, "", []) or right_value in (None, "", [])
                 or left_value != right_value):
             mismatches.append(label)

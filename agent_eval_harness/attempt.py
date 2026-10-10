@@ -8,11 +8,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import difflib
 import hashlib
+import importlib.metadata
 import json
+import platform
 from pathlib import Path, PurePosixPath
 import queue
 import shutil
 import stat
+import subprocess
 import tempfile
 import threading
 import time
@@ -30,6 +33,7 @@ from agent_eval_harness.environment import (
     run_shell as container_run_shell,
     search_text as container_search_text,
 )
+from agent_eval_harness.admission import task_package_evidence
 from agent_eval_harness.model import (
     ModelAdapter,
     ModelConfig,
@@ -126,6 +130,8 @@ class AdmittedTask:
     task_version: str
     source_revision: str
     acceptance_check_version: str
+    task_identity: dict[str, Any]
+    task_package_sha256: str
     source_repository: Path
     image: str
     runtime_version: str
@@ -153,6 +159,12 @@ class AdmittedTask:
         manifest = json.loads((task_package / "manifest.json").read_text(encoding="utf-8"))
         if evidence.get("source_revision") != manifest.get("source", {}).get("revision"):
             raise ValueError("admission evidence and task manifest pin different source revisions")
+        current_package = task_package_evidence(task_package, manifest)
+        if evidence.get("task_package") != current_package:
+            raise ValueError(
+                "admission evidence does not bind the current task identity and package contents; "
+                "rerun task admission before attempting this package"
+            )
         environment = evidence.get("environment_evidence") or {}
         image = environment.get("image_tag")
         image_id = environment.get("image_id")
@@ -163,6 +175,8 @@ class AdmittedTask:
             task_version=manifest["task_version"],
             source_revision=manifest["source"]["revision"],
             acceptance_check_version=manifest["acceptance_check_version"],
+            task_identity=current_package["identity"],
+            task_package_sha256=current_package["sha256"],
             source_repository=source_repository,
             image=image,
             runtime_version=manifest["environment"]["runtime"].removeprefix("Python "),
@@ -217,6 +231,53 @@ def _context_size_bytes(messages: list[dict[str, Any]]) -> int:
     return len(serialized.encode("utf-8"))
 
 
+def _harness_provenance() -> dict[str, Any]:
+    """Describe the exact harness checkout used by every orchestration route."""
+    try:
+        commit = subprocess.run(
+            ["git", "-C", str(REPOSITORY_ROOT), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "-C", str(REPOSITORY_ROOT), "status", "--porcelain=v1", "-z"],
+            check=True, capture_output=True, timeout=5,
+        ).stdout
+        diff = subprocess.run(
+            ["git", "-C", str(REPOSITORY_ROOT), "diff", "HEAD", "--binary"],
+            check=True, capture_output=True, timeout=5,
+        ).stdout
+        digest = hashlib.sha256(diff)
+        untracked = subprocess.run(
+            ["git", "-C", str(REPOSITORY_ROOT), "ls-files", "--others", "--exclude-standard", "-z"],
+            check=True, capture_output=True, timeout=5,
+        ).stdout
+        for relative in sorted(filter(None, untracked.split(b"\0"))):
+            path = REPOSITORY_ROOT / relative.decode("utf-8", errors="surrogateescape")
+            if path.is_file() and not path.is_symlink():
+                digest.update(relative + b"\0" + path.read_bytes())
+        return {
+            "commit": commit,
+            "working_tree": "dirty" if status else "clean",
+            "working_tree_sha256": digest.hexdigest() if status else None,
+        }
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {
+            "commit": None,
+            "working_tree": "unavailable",
+            "working_tree_sha256": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _dependency_versions() -> dict[str, str]:
+    versions = {"python-runtime": platform.python_version()}
+    for distribution in importlib.metadata.distributions():
+        name = distribution.metadata.get("Name")
+        if isinstance(name, str) and name:
+            versions[name.casefold().replace("_", "-")] = distribution.version
+    return dict(sorted(versions.items()))
+
+
 def _initial_context(task: AdmittedTask, task_repository: Path) -> list[dict[str, str]]:
     public_task = task.public_task_path.read_text(encoding="utf-8")
     instructions_path = task_repository / "AGENTS.md"
@@ -226,10 +287,27 @@ def _initial_context(task: AdmittedTask, task_repository: Path) -> list[dict[str
         for path in task_repository.rglob("*")
         if path.is_file() and ".git" not in path.relative_to(task_repository).parts
     )
-
-    file_map = "\n".join(f"- {path}" for path in files[:100])
-    if len(files) > 100:
-        file_map += f"\n- ... and {len(files) - 100} more tracked files"
+    root_files = [path for path in files if "/" not in path]
+    selected = list(root_files[:10])
+    for directory, allowance in (("app/", 30), ("src/", 20), ("tests/", 30)):
+        selected.extend([path for path in files if path.startswith(directory)][:allowance])
+    selected = list(dict.fromkeys(selected))[:100]
+    selected_set = set(selected)
+    remaining = [path for path in files if path not in selected_set]
+    selected.extend(remaining[: max(0, 100 - len(selected))])
+    file_map = "\n".join(f"- {path}" for path in selected)
+    omitted = [path for path in files if path not in set(selected)]
+    if omitted:
+        counts: dict[str, int] = {}
+        for path in omitted:
+            area = path.split("/", 1)[0] if "/" in path else "(root)"
+            counts[area] = counts.get(area, 0) + 1
+        common_areas = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:8]
+        summary = ", ".join(f"{area} ({count})" for area, count in common_areas)
+        file_map += (
+            f"\n- ... and {len(omitted)} more files"
+            f"\nAdditional file counts by area: {summary}"
+        )
     system = (
         "You are a coding agent working on a bug-repair task. Use repository tools to inspect, "
         "edit, and run checks. The task environment contains a writable pinned repository. "
@@ -449,6 +527,102 @@ def _collect_artifacts(result: dict[str, Any], artifact_directory: Path) -> None
         encoding="utf-8",
     )
     (artifact_directory / "report.html").write_text(render_attempt_report(result), encoding="utf-8")
+
+
+def _finalize_accounting(
+    result: dict[str, Any], model: ModelAdapter, model_call_count: int,
+    usage_records: list[dict[str, Any]], trace: list[dict[str, Any]],
+) -> None:
+    metadata = result["metadata"]
+    metadata["model_call_count"] = model_call_count
+    metadata["retry_count"] = metadata.get("retry_count", 0)
+    metadata["usage_by_call"] = usage_records
+    metadata["observed_models"] = _observed_models(usage_records)
+    metadata["cost"] = _cost_summary(usage_records, trace)
+    snapshotter = getattr(model, "accounting_snapshot", None)
+    if callable(snapshotter):
+        try:
+            metadata["spend_budget"] = snapshotter()
+        except Exception as exc:
+            metadata["spend_budget"] = {
+                "status": "unavailable",
+                "error_category": "accounting_snapshot_error",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+
+def _finalize_evaluation(
+    result: dict[str, Any], evaluation: dict[str, Any], trace: list[dict[str, Any]]
+) -> None:
+    """Apply the same evaluator-to-verdict mapping on normal and recovery paths."""
+    from agent_eval_harness.admission import CHECK_IDS
+
+    result["evaluation"] = evaluation
+    checks = evaluation.get("checks")
+    if evaluation.get("status") == "invalid_patch":
+        verdict, category = "failure", "invalid_patch"
+    elif (
+        evaluation.get("status") != "completed"
+        or not isinstance(checks, Mapping)
+        or set(checks) != set(CHECK_IDS)
+        or any(type(value) is not bool for value in checks.values())
+    ):
+        verdict, category = "invalid_environment", "evaluation_environment_error"
+    elif evaluation.get("candidate_execution_error"):
+        verdict, category = "failure", "candidate_execution_error"
+    elif all(checks.values()):
+        verdict, category = "success", None
+    else:
+        verdict, category = "failure", "canonical_check_failure"
+    result["functional_verdict"] = verdict
+    result["failure_category"] = category
+    _record(
+        trace,
+        "evaluation",
+        status=evaluation.get("status"),
+        failure_category=category,
+        functional_verdict=verdict,
+        checks=checks if isinstance(checks, Mapping) else {},
+        error=evaluation.get("error"),
+        container_configuration=evaluation.get("container_configuration", {}),
+    )
+
+
+def _evaluate_candidate_changes(
+    defect_repository: Path,
+    changes: list[dict[str, Any]],
+    *,
+    image_id: str,
+    admitted_task: AdmittedTask,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Apply a collected candidate, then run the canonical evaluator.
+
+    Unsafe candidate paths are candidate failures. Failures while staging the
+    evaluator or running its Docker worker are environment errors, so an
+    unavailable canonical result cannot be scored as a repair failure.
+    """
+    try:
+        with tempfile.TemporaryDirectory(prefix="agent-eval-candidate-evaluator-") as scratch:
+            evaluation_repository = Path(scratch) / "task-repository"
+            shutil.copytree(defect_repository, evaluation_repository)
+            try:
+                _apply_candidate_changes(evaluation_repository, changes)
+            except EnvironmentFailure as exc:
+                return {"status": "invalid_patch", "checks": {}, "error": str(exc)}
+            return run_canonical_checks(
+                image_id,
+                evaluation_repository,
+                admitted_task.evaluator_directory,
+                admitted_task.runtime_version,
+                timeout_seconds=timeout_seconds,
+            )
+    except Exception as exc:
+        return {
+            "status": "error",
+            "checks": {},
+            "error": f"Candidate evaluator staging or execution failed: {type(exc).__name__}: {exc}",
+        }
 
 
 def _record(trace: list[dict[str, Any]], event_type: str, **data: Any) -> dict[str, Any]:
@@ -757,6 +931,7 @@ def _execute_tool_turn(
             "status": tool_result.get("status"),
             "output": visible_output,
             "error": tool_result.get("error"),
+            "exit_code": tool_result.get("exit_code"),
             "error_category": tool_result.get("error_category"),
             "retryable": tool_result.get("retryable", False),
             "truncated": truncated,
@@ -815,6 +990,8 @@ def attempt_and_evaluate(
             "task_version": admitted_task.task_version,
             "source_revision": admitted_task.source_revision,
             "acceptance_check_version": admitted_task.acceptance_check_version,
+            "task_identity": _json_copy(admitted_task.task_identity),
+            "task_package_sha256": admitted_task.task_package_sha256,
             "requested_model": model_config.requested_model,
             "provider": model_config.provider,
             "model_settings": _json_copy(dict(model_config.settings)),
@@ -831,6 +1008,8 @@ def attempt_and_evaluate(
                 admitted_task.admission_evidence_path.read_text(encoding="utf-8")
             ).get("environment_evidence", {}).get("image_id"),
             "runtime_version": admitted_task.runtime_version,
+            "harness_revision": _harness_provenance(),
+            "dependency_versions": _dependency_versions(),
             "cost": {"status": "unavailable", "amount": None, "currency": None},
             "qualitative_review": {"status": "pending"},
         },
@@ -1007,21 +1186,6 @@ def attempt_and_evaluate(
                         termination = stop_reason
 
             result["termination_reason"] = termination
-            result["metadata"]["model_call_count"] = model_call_count
-            result["metadata"]["usage_by_call"] = usage_records
-            result["metadata"]["observed_models"] = _observed_models(usage_records)
-            result["metadata"]["cost"] = _cost_summary(usage_records, trace)
-            snapshotter = getattr(model, "accounting_snapshot", None)
-            if callable(snapshotter):
-                try:
-                    result["metadata"]["spend_budget"] = snapshotter()
-                except Exception as exc:
-                    result["metadata"]["spend_budget"] = {
-                        "status": "unavailable",
-                        "error_category": "accounting_snapshot_error",
-                        "error": f"{type(exc).__name__}: {exc}",
-                    }
-            result["metadata"].setdefault("retry_count", 0)
             result["attempt_container_configuration"] = attempt_container.configuration
             cleanup_timeout = min(
                 budgets.cleanup_timeout_seconds,
@@ -1059,8 +1223,6 @@ def attempt_and_evaluate(
                 result["evaluation"] = {
                     "status": "invalid_patch", "checks": {}, "error": str(exc)
                 }
-                result["failure_category"] = "invalid_patch"
-                result["functional_verdict"] = "failure"
             else:
                 _record(
                     trace,
@@ -1071,47 +1233,16 @@ def attempt_and_evaluate(
                 )
 
             if result["candidate"]["status"] == "collected":
-                try:
-                    with tempfile.TemporaryDirectory(prefix="agent-eval-fresh-evaluator-") as evaluator_scratch:
-                        evaluation_repository = Path(evaluator_scratch) / "task-repository"
-                        shutil.copytree(defect_repository, evaluation_repository)
-                        _apply_candidate_changes(evaluation_repository, changes)
-                        evaluation = run_canonical_checks(
-                            image_evidence["image_id"],
-                            evaluation_repository,
-                            admitted_task.evaluator_directory,
-                            admitted_task.runtime_version,
-                            timeout_seconds=budgets.evaluation_timeout_seconds,
-                        )
-                except EnvironmentFailure as exc:
-                    evaluation = {
-                        "status": "invalid_patch", "checks": {}, "error": str(exc)
-                    }
-                    result["failure_category"] = "invalid_patch"
-                    result["functional_verdict"] = "failure"
-                result["evaluation"] = evaluation
-                if evaluation.get("status") == "invalid_patch":
-                    result["failure_category"] = "invalid_patch"
-                    result["functional_verdict"] = "failure"
-                elif evaluation.get("status") != "completed":
-                    result["failure_category"] = "evaluation_environment_error"
-                    result["functional_verdict"] = "invalid_environment"
-                elif evaluation.get("checks") and all(value is True for value in evaluation["checks"].values()):
-                    result["failure_category"] = None
-                    result["functional_verdict"] = "success"
-                else:
-                    result["failure_category"] = "canonical_check_failure"
-                    result["functional_verdict"] = "failure"
-                _record(
-                    trace,
-                    "evaluation",
-                    status=evaluation.get("status"),
-                    failure_category=result.get("failure_category"),
-                    functional_verdict=result["functional_verdict"],
-                    checks=evaluation.get("checks", {}),
-                    error=evaluation.get("error"),
-                    container_configuration=evaluation.get("container_configuration", {}),
+                evaluation = _evaluate_candidate_changes(
+                    defect_repository,
+                    changes,
+                    image_id=image_evidence["image_id"],
+                    admitted_task=admitted_task,
+                    timeout_seconds=budgets.evaluation_timeout_seconds,
                 )
+                _finalize_evaluation(result, evaluation, trace)
+            elif result["candidate"].get("status") == "unavailable":
+                _finalize_evaluation(result, result["evaluation"], trace)
     except KeyboardInterrupt as exc:
         result["termination_reason"] = "interrupted"
         result["functional_verdict"] = "invalid_environment"
@@ -1150,21 +1281,7 @@ def attempt_and_evaluate(
                 cleanup_error = f"{type(exc).__name__}: {exc}"
                 result.setdefault("cleanup_error", cleanup_error)
                 _record(trace, "cleanup_error", status="error", error=cleanup_error)
-        result["metadata"]["model_call_count"] = model_call_count
-        result["metadata"]["retry_count"] = result["metadata"].get("retry_count", 0)
-        result["metadata"].setdefault("usage_by_call", usage_records)
-        result["metadata"]["observed_models"] = _observed_models(usage_records)
-        result["metadata"]["cost"] = _cost_summary(usage_records, trace)
-        snapshotter = getattr(model, "accounting_snapshot", None)
-        if callable(snapshotter):
-            try:
-                result["metadata"]["spend_budget"] = snapshotter()
-            except Exception as exc:
-                result["metadata"]["spend_budget"] = {
-                    "status": "unavailable",
-                    "error_category": "accounting_snapshot_error",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
+        _finalize_accounting(result, model, model_call_count, usage_records, trace)
         result["metadata"].setdefault(
             "attempt_duration_seconds", round(time.monotonic() - started, 6)
         )
@@ -1193,49 +1310,24 @@ def attempt_and_evaluate(
                 if image_evidence:
                     with tempfile.TemporaryDirectory(prefix="agent-eval-recovered-evaluator-") as scratch:
                         defective = Path(scratch) / "defect-repository"
-                        evaluation_repository = Path(scratch) / "evaluation-repository"
                         _materialize_snapshot(defective, defect_baseline)
-                        shutil.copytree(defective, evaluation_repository)
-                        _apply_candidate_changes(evaluation_repository, changes)
-                        evaluation = run_canonical_checks(
-                            image_evidence["image_id"], evaluation_repository,
-                            admitted_task.evaluator_directory,
-                            admitted_task.runtime_version,
+                        evaluation = _evaluate_candidate_changes(
+                            defective,
+                            changes,
+                            image_id=image_evidence["image_id"],
+                            admitted_task=admitted_task,
                             timeout_seconds=budgets.evaluation_timeout_seconds,
                         )
-                    result["evaluation"] = evaluation
-                    if evaluation.get("status") != "completed":
-                        result["functional_verdict"] = "invalid_environment"
-                        result["failure_category"] = "evaluation_environment_error"
-                    elif evaluation.get("checks") and all(
-                        value is True for value in evaluation["checks"].values()
-                    ):
-                        result["functional_verdict"] = "success"
-                        result["failure_category"] = None
-                    else:
-                        result["functional_verdict"] = "failure"
-                        result["failure_category"] = "canonical_check_failure"
-                    _record(
-                        trace, "evaluation", status=evaluation.get("status"),
-                        functional_verdict=result["functional_verdict"],
-                        failure_category=result.get("failure_category"),
-                        checks=evaluation.get("checks", {}),
-                        error=evaluation.get("error"),
-                    )
+                    _finalize_evaluation(result, evaluation, trace)
             except EnvironmentFailure as exc:
+                evaluation = {"status": "invalid_patch", "checks": {}, "error": str(exc)}
                 result["candidate"] = {
                     "status": "unavailable", "changed_files": [], "files": [],
                     "patch": "", "collection_error": str(exc),
                 }
-                result["evaluation"] = {
-                    "status": "invalid_patch", "checks": {}, "error": str(exc)
-                }
-                result["functional_verdict"] = "failure"
-                result["failure_category"] = "invalid_patch"
-                _record(
-                    trace, "patch_collection", status="unavailable",
-                    error_category="invalid_patch", error=str(exc),
-                )
+                _record(trace, "patch_collection", status="unavailable",
+                        error_category="invalid_patch", error=str(exc))
+                _finalize_evaluation(result, evaluation, trace)
         result["duration_seconds"] = round(time.monotonic() - started, 6)
         result["metadata"]["duration_seconds"] = result["duration_seconds"]
         result["metadata"]["finished_at"] = _timestamp()

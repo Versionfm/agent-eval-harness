@@ -16,7 +16,10 @@ from urllib.parse import quote
 
 _MISSING = object()
 _COMPARISON_FIELDS = (
-    ("Task definition", ("task_id", "task_version", "acceptance_check_version")),
+    ("Task definition", (
+        "task_id", "task_version", "acceptance_check_version",
+        "task_identity", "task_package_sha256",
+    )),
     ("Source revision", ("source_revision",)),
     ("Task Dockerfile and runtime", (
         "task_image_evidence.dockerfile_sha256",
@@ -27,6 +30,7 @@ _COMPARISON_FIELDS = (
     ("Observed model", ("observed_models",)),
     ("Model settings", ("model_settings",)),
     ("Orchestrator dependency versions", ("dependency_versions",)),
+    ("Harness revision", ("harness_revision",)),
     ("Initial effective context", ("initial_context_sha256",)),
     ("Attempt budgets", ("budgets",)),
     ("Pricing source", ("pricing_source_url", "pricing_source_checked_at")),
