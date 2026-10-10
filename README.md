@@ -12,4 +12,4 @@ The first milestone is one reproducible repair attempt on the user's ML Tutor re
 
 See [the design interview](docs/design-interview.md) for confirmed scope and open questions.
 
-The proposed [implementation design](docs/DESIGN.md) and [learning sequence](docs/LEARNING_PLAN.md) are ready for the final shared-understanding check. Initial model: direct DeepSeek Flash with thinking enabled at low effort; Qwen is a later comparison.
+The [published specification](https://github.com/Versionfm/agent-eval-harness/issues/1) synthesizes the design interview, with a [local copy](docs/SPEC.md), [implementation design](docs/DESIGN.md), and [learning sequence](docs/LEARNING_PLAN.md). Initial model: direct DeepSeek Flash with thinking enabled at low effort; Qwen is a later comparison. Implementation has not started.
