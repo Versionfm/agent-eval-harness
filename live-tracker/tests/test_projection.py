@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from attempt_fixtures import CHECKS, PATCH, REASONING, RESPONSE, record_attempt
-from live_tracker.projection import build_result, final_results, render_report
+from live_tracker.projection import build_result, final_results, render_report, stop_point
 from live_tracker.recorder import AttemptRecorder, FaultyStorage
 
 
@@ -149,3 +149,32 @@ class RecordedFinalFactsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StopPointTests(unittest.TestCase):
+    def test_the_stop_names_the_last_step_before_the_termination_record(self):
+        events = [
+            {"sequence": 1, "type": "attempt_started", "data": {}},
+            {"sequence": 2, "type": "node.enter", "data": {"node": "model_request", "graph_step_count": 13}},
+            {"sequence": 3, "type": "model.start", "operation_id": "model-7", "data": {"model_call": 7}},
+            {"sequence": 4, "type": "model.outcome", "operation_id": "model-7",
+             "data": {"model_call": 7, "status": "ok", "response": "large"}},
+            {"sequence": 5, "type": "termination", "data": {"reason": "provider_output_limit"}},
+            {"sequence": 6, "type": "node.outcome", "data": {"graph_step_count": 14}},
+        ]
+        stop = stop_point(events)
+        self.assertEqual(stop["reason"], "provider_output_limit")
+        self.assertEqual(stop["sequence"], 5)
+        self.assertEqual(stop["step"], {"sequence": 4, "type": "model.outcome", "operation_id": "model-7",
+                                        "data": {"model_call": 7, "status": "ok"}})
+        self.assertEqual((stop["model_call"], stop["graph_step_count"]), (7, 13), "later events are not used")
+        self.assertIsNone(stop_point(events[:4]), "no stop is recorded yet")
+
+    def test_final_results_carry_the_total_cost_and_token_totals(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "attempt"
+            record_attempt(directory)
+            final = final_results(directory)
+        self.assertEqual(final["cost"]["estimated"]["amount"], 0.001)
+        self.assertEqual(final["tokens"], {"input": 51, "output": 10, "calls_with_usage": 2})
+        self.assertEqual(final["model_calls"], 2)

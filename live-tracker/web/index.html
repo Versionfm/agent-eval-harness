@@ -3,37 +3,86 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Live attempt workbench</title>
+  <title>Attempt workbench</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
-    <h1>Live attempt workbench</h1>
-    <p><span id="status" data-state="connecting">connecting</span> <span id="lag"></span></p>
-    <p id="detail"></p>
-    <p id="mode" class="note" data-mode="live"></p>
-    <p><a id="report-link" href="#" hidden>Open the projected final report</a></p>
+  <header class="appbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+      <div>
+        <h1>Attempt workbench</h1>
+        <p id="detail" class="sub"></p>
+      </div>
+    </div>
+    <div class="appbar-meta">
+      <label class="picker"><span class="visually-hidden">Attempt</span><select id="attempt-select" aria-label="Attempt"></select></label>
+      <span id="status" class="pill" data-state="connecting">connecting</span>
+      <span id="lag" class="sub"></span>
+      <a id="report-link" class="btn btn-ghost" href="#" target="_blank" rel="noopener" hidden>Final report<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></a>
+    </div>
   </header>
-  <nav id="playback" aria-label="Playback controls">
-    <button id="previous" type="button">Previous</button>
-    <button id="play" type="button">Play</button>
-    <button id="next" type="button">Next</button>
-    <label>Speed <select id="speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option></select></label>
+
+  <div class="notices">
+    <p id="mode" class="notice" data-mode="live"></p>
+    <p id="recording" class="notice" role="status" hidden></p>
+  </div>
+
+  <nav id="playback" class="transport" aria-label="Playback controls">
+    <div class="transport-buttons">
+      <button id="previous" class="icon-btn" type="button" title="Previous event (←)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg><span class="visually-hidden">Previous</span>
+      </button>
+      <button id="play" class="icon-btn primary" type="button" title="Play or pause (Space)" data-playing="false">
+        <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>
+        <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5h3v14H8zM13 5h3v14h-3z"/></svg>
+        <span class="visually-hidden label">Play</span>
+      </button>
+      <button id="next" class="icon-btn" type="button" title="Next event (→)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg><span class="visually-hidden">Next</span>
+      </button>
+    </div>
     <input id="scrub" type="range" min="1" max="1" value="1" aria-label="Scrub recorded events">
     <span id="position" aria-live="polite"></span>
-    <button id="follow" type="button">Follow latest</button>
+    <label class="picker compact"><span class="visually-hidden">Speed</span><select id="speed" aria-label="Playback speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+    <button id="follow" class="btn btn-ghost" type="button" title="Jump to the newest event (End)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l6 6-6 6M14 5v14"/></svg>Follow latest
+    </button>
   </nav>
+
   <main class="workbench">
-    <nav id="components" aria-label="Execution map"></nav>
-    <section id="timeline-pane" aria-label="Timeline">
-      <ol id="timeline" aria-live="polite"></ol>
+    <section class="card map-card" aria-labelledby="map-title">
+      <div class="card-head">
+        <h2 id="map-title">Execution map</h2>
+        <p class="legend" aria-hidden="true"><span class="key active">at selection</span><span class="key reached">reached</span><span class="key idle">not reached</span></p>
+      </div>
+      <nav id="components" aria-label="Execution map"></nav>
     </section>
-    <aside id="inspector-pane" aria-label="Inspector">
-      <section id="final" aria-label="Final results"><p class="note">Loading final results.</p></section>
+
+    <div class="split">
+    <section id="timeline-pane" class="card" aria-labelledby="timeline-title">
+      <div class="card-head">
+        <h2 id="timeline-title">Timeline</h2>
+        <div id="filters" class="segmented" role="group" aria-label="Filter events">
+          <button type="button" data-filter="all" aria-pressed="true">All</button>
+          <button type="button" data-filter="model" aria-pressed="false">Model</button>
+          <button type="button" data-filter="tool" aria-pressed="false">Tools</button>
+          <button type="button" data-filter="flow" aria-pressed="false">Flow</button>
+          <button type="button" data-filter="state" aria-pressed="false">State</button>
+          <button type="button" data-filter="lifecycle" aria-pressed="false">Lifecycle</button>
+        </div>
+      </div>
+      <ol id="timeline" data-filter="all" aria-live="polite"></ol>
+    </section>
+
+    <aside id="inspector-pane" class="card" aria-label="Inspector">
       <section id="inspector"><p class="note">Select a component or an event.</p></section>
       <section id="state" aria-label="State at selected point"></section>
       <section id="evidence" aria-label="Retained artifacts"></section>
     </aside>
+    </div>
+
+    <section id="final" class="card final-card" aria-label="Final results"><p class="note">Loading final results.</p></section>
   </main>
   <script type="module" src="/static/dist/timeline.js"></script>
 </body>

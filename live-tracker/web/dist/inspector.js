@@ -1,7 +1,7 @@
 // Inspector (right pane): selected event or component, selected-point state, retained artifacts.
 // Evidence is rendered with textContent. Excerpts are labelled; full output stays one link away.
 import { ARTIFACT_PATH, MUTATING_TOOLS, OPERATION_STARTS, selectedPointState } from "./model.js";
-import { block, display, el, kv } from "./dom.js";
+import { block, count, display, el, kv, money } from "./dom.js";
 const EXCERPT_CHARS = 2000;
 // Each capture status is labelled apart: a declared omission is not a failure, and neither is a
 // settlement that is not established. None of them changes the attempt or the candidate.
@@ -93,15 +93,18 @@ export class Inspector {
                 ? `graph step ${display(data.graph_step_count)}, after node ${display(data.after_node)}`
                 : `loop step ${display(data.loop_step)}, after ${display(data.after_phase)}`;
             root.append(el("p", "note", `from state event #${source.sequence} (${where}); later events are not used`));
-            kv(root, "model calls", `${display(data.model_calls)} / ${display(data.max_model_calls)}`);
-            kv(root, "context bytes", `${display(data.context_bytes)} / ${display(data.max_context_bytes)}`);
-            kv(root, "tool result messages", data.tool_result_messages);
-            kv(root, "tool output limit bytes", data.tool_output_limit_bytes);
-            kv(root, "attempt deadline seconds", data.attempt_deadline_seconds);
-            kv(root, "elapsed seconds at selection", event.elapsed_seconds);
-            kv(root, "usage totals", data.usage_totals);
-            kv(root, "estimated cost", data.estimated_cost);
-            kv(root, "reported cost", data.reported_cost);
+            const tiles = el("div", "tiles");
+            root.append(tiles);
+            kv(tiles, "model calls", `${display(data.model_calls)} / ${display(data.max_model_calls)}`);
+            kv(tiles, "context bytes", `${count(data.context_bytes)} / ${count(data.max_context_bytes)}`);
+            kv(tiles, "input tokens", count(data.usage_totals?.prompt_tokens));
+            kv(tiles, "output tokens", count(data.usage_totals?.completion_tokens));
+            kv(tiles, "estimated cost", money(data.estimated_cost));
+            kv(tiles, "reported cost", money(data.reported_cost));
+            kv(tiles, "tool result messages", data.tool_result_messages);
+            kv(tiles, "elapsed seconds at selection", event.elapsed_seconds?.toFixed(2));
+            kv(tiles, "tool output limit bytes", count(data.tool_output_limit_bytes));
+            kv(tiles, "attempt deadline seconds", data.attempt_deadline_seconds);
         }
         this.stateSection.replaceChildren(root);
     }

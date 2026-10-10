@@ -51,10 +51,25 @@ export class WorkflowMap {
         const { events, selectedIndex, stopped, pressed } = this.shown;
         const state = computeWorkflow(events, selectedIndex, stopped, this.wide.matches);
         const key = `${state.flow}/${this.wide.matches ? "wide" : "tall"}`;
-        if (key !== this.key || this.svg === null) {
+        const rebuilt = key !== this.key || this.svg === null;
+        if (rebuilt) {
             this.build(state, key);
         }
         this.paint(state, pressed, events.length === 0);
+        if (rebuilt) {
+            this.fit();
+        }
+    }
+    // Crops the drawing to what it contains, still at natural size, so the band has no empty margin.
+    fit() {
+        const box = this.svg.getBBox();
+        if (box.width === 0) {
+            return;
+        }
+        const pad = 6;
+        this.svg.setAttribute("viewBox", `${box.x - pad} ${box.y - pad} ${box.width + 2 * pad} ${box.height + 2 * pad}`);
+        this.svg.setAttribute("width", String(Math.ceil(box.width + 2 * pad)));
+        this.svg.setAttribute("height", String(Math.ceil(box.height + 2 * pad)));
     }
     build(state, key) {
         this.key = key;
@@ -86,7 +101,7 @@ export class WorkflowMap {
             const group = svgEl("g", {
                 class: "wf-node", "data-component": node.id, role: "button", tabindex: 0,
             });
-            group.append(svgEl("rect", { class: "wf-ring", x: node.x - 4, y: node.y - 4, width: node.w + 8, height: node.h + 8, rx: 9 }), svgEl("rect", { class: "wf-box", x: node.x, y: node.y, width: node.w, height: node.h, rx: 6 }), svgEl("text", { class: "wf-title", x: node.x + 10, y: node.y + 22 }, node.label), svgEl("text", { class: "wf-status", x: node.x + 10, y: node.y + 40 }));
+            group.append(svgEl("rect", { class: "wf-ring", x: node.x - 4, y: node.y - 4, width: node.w + 8, height: node.h + 8, rx: 13 }), svgEl("rect", { class: "wf-box", x: node.x, y: node.y, width: node.w, height: node.h, rx: 10 }), svgEl("text", { class: "wf-title", x: node.x + 12, y: node.y + 23 }, node.label), svgEl("circle", { class: "wf-dot", cx: node.x + 15.5, cy: node.y + 37, r: 3.5 }), svgEl("text", { class: "wf-status", x: node.x + 24, y: node.y + 41 }));
             group.addEventListener("click", () => this.onSelect(node.id));
             group.addEventListener("keydown", (event) => {
                 if (event.key === "Enter" || event.key === " ") {

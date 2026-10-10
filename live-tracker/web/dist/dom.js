@@ -18,6 +18,17 @@ export function display(value) {
     }
     return String(value);
 }
+export function count(value) {
+    return typeof value === "number" ? value.toLocaleString("en-US") : display(value);
+}
+// A cost summary as recorded: the amount with its status, never a missing amount shown as zero.
+export function money(cost) {
+    if (typeof cost?.amount !== "number") {
+        return display(cost?.status);
+    }
+    const missing = cost.missing_usage_calls ?? cost.missing_charge_calls;
+    return `${cost.amount.toFixed(5)} ${cost.currency ?? ""} ${cost.status}` + (missing ? `, ${missing} calls missing` : "");
+}
 // One labelled value on a single line, so text reads "key: value" in the page.
 // `field` names the value for tests and cross-checks (data-field); it never changes what is shown.
 export function kv(parent, key, value, field) {
@@ -27,7 +38,7 @@ export function kv(parent, key, value, field) {
     if (field) {
         shown.dataset.field = field;
     }
-    line.append(el("span", "k", key), document.createTextNode(": "), shown);
+    line.append(el("span", "k", key), el("span", "sep", ": "), shown);
     parent.append(line);
 }
 export function block(parent, title, value, className = "", field) {

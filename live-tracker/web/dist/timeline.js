@@ -7,7 +7,7 @@ import { follow } from "./connection.js";
 import { el } from "./dom.js";
 import { renderFinal } from "./final.js";
 import { Inspector } from "./inspector.js";
-import { COMPONENTS, OPERATION_STARTS, componentsOf } from "./model.js";
+import { COMPONENTS, OPERATION_STARTS, categoryOf, componentsOf } from "./model.js";
 import { Playback } from "./playback.js";
 const timeline = document.getElementById("timeline");
 const status = document.getElementById("status");
@@ -27,11 +27,9 @@ const controls = {
     position: document.getElementById("position"),
     follow: document.getElementById("follow"),
 };
-const banner = el("p", "note");
-banner.id = "recording";
-banner.setAttribute("role", "status");
-banner.hidden = true;
-status.after(banner);
+const banner = document.getElementById("recording");
+const filters = document.getElementById("filters");
+const attemptSelect = document.getElementById("attempt-select");
 let inspector;
 let playback;
 let mode = "live";
@@ -65,6 +63,7 @@ function applyRecording(next) {
     recording = next;
     const text = describeRecording(next);
     banner.textContent = text;
+    banner.dataset.state = next.state;
     banner.hidden = text === "";
     markRows();
     setMode();
@@ -90,11 +89,11 @@ function describe(event) {
         case "model.start":
             return `model call ${data.model_call} started with ${data.message_count} messages`;
         case "model.outcome":
-            return `model call ${data.model_call} ${data.status}` + (data.error ? `: ${data.error}` : "");
+            return `model call ${data.model_call} ${data.status}` + took(data) + (data.error ? `: ${data.error}` : "");
         case "tool.start":
             return `${data.tool_name} started`;
         case "tool.outcome":
-            return `${data.tool_name} ${data.status}` + (data.result?.error ? `: ${data.result.error}` : "");
+            return `${data.tool_name} ${data.status}` + took(data) + (data.result?.error ? `: ${data.result.error}` : "");
         case "tool.capture":
             return `repository capture ${data.status}` + (data.reason ? ` (${data.reason})` : "");
         case "attempt_finished":
@@ -103,19 +102,37 @@ function describe(event) {
             return event.type;
     }
 }
+function took(data) {
+    return typeof data.duration_seconds === "number" ? ` in ${data.duration_seconds.toFixed(2)} s` : "";
+}
+// Time since the attempt started, as recorded (monotonic). Legacy records have none.
+function elapsed(seconds) {
+    if (typeof seconds !== "number") {
+        return "";
+    }
+    if (seconds < 60) {
+        return `${seconds.toFixed(1)}s`;
+    }
+    return `${Math.floor(seconds / 60)}m ${String(Math.floor(seconds % 60)).padStart(2, "0")}s`;
+}
 function buildRow(event) {
     const row = el("li");
     row.dataset.type = event.type;
     row.dataset.sequence = String(event.sequence);
+    row.dataset.category = categoryOf(event.type);
     const button = el("button", "row");
     button.type = "button";
-    button.append(el("span", "sequence", `#${event.sequence}`), el("span", "kind", event.type), el("span", "text", describe(event)));
+    const main = el("span", "main");
+    main.append(el("span", "kind", event.type), el("span", "text", describe(event)));
+    const meta = el("span", "meta");
     if (event.operation_id) {
-        button.append(el("code", "", event.operation_id));
+        meta.append(el("code", "", event.operation_id));
     }
     if (OPERATION_STARTS.has(event.type)) {
-        button.append(el("span", "operation-status"));
+        meta.append(el("span", "operation-status"));
     }
+    meta.append(el("span", "elapsed", elapsed(event.elapsed_seconds)));
+    button.append(el("span", "dot"), el("span", "sequence", `#${event.sequence}`), main, meta);
     button.addEventListener("click", () => selectEvent(event.sequence));
     row.append(button);
     return row;
@@ -201,6 +218,17 @@ function setMode() {
         ? "Live: following the newest recorded event."
         : `Live: not following. Showing #${events[selectedIndex]?.sequence ?? "?"}; Follow latest resumes.`;
 }
+// Keeps the selected row inside the timeline's own scroll box, without moving the page.
+function revealSelected() {
+    const row = rows.get(events[selectedIndex]?.sequence ?? -1);
+    if (!row) {
+        return;
+    }
+    const top = row.offsetTop;
+    if (top < timeline.scrollTop || top + row.offsetHeight > timeline.scrollTop + timeline.clientHeight) {
+        timeline.scrollTop = top - timeline.clientHeight / 2;
+    }
+}
 function selectIndex(index) {
     const event = events[index];
     if (!event) {
@@ -209,6 +237,7 @@ function selectIndex(index) {
     selectedIndex = index;
     activeComponent = null;
     markRows();
+    revealSelected();
     syncPlayback();
     setMode();
     void inspector.showEvent(events, event);
@@ -240,7 +269,7 @@ async function loadSaved(attemptId) {
     status.textContent = stopped ? "recording-error" : "saved";
     status.dataset.state = status.textContent;
     lag.textContent = "";
-    detail.textContent = `${body.events.length} recorded events`;
+    detail.textContent = `${attemptId} · ${body.events.length} recorded events`;
     if (events.length > 0) {
         selectIndex(events.length - 1);
     }
@@ -254,12 +283,27 @@ async function start() {
     const requested = new URLSearchParams(window.location.search).get("attempt");
     const chosen = attempts.find((item) => item.attempt_id === requested) ?? attempts[0];
     const attemptId = chosen.attempt_id;
+    // Switching attempts reloads the page for that attempt, so no state carries over between recordings.
+    attemptSelect.replaceChildren(...attempts.map((item) => {
+        const option = el("option", "", `${item.attempt_id} · ${item.mode}`);
+        option.value = item.attempt_id;
+        return option;
+    }));
+    attemptSelect.value = attemptId;
+    attemptSelect.disabled = attempts.length < 2;
+    attemptSelect.addEventListener("change", () => {
+        window.location.search = `?attempt=${encodeURIComponent(attemptSelect.value)}`;
+    });
     inspector = new Inspector(attemptId, document.getElementById("inspector"), document.getElementById("state"), document.getElementById("evidence"));
     playback = new Playback(controls, selectIndex);
     markRows();
     reportLink.href = `/api/attempts/${encodeURIComponent(attemptId)}/report`;
     reportLink.hidden = false;
-    void renderFinal(finalPanel, attemptId);
+    // "Show in timeline" selects the stop step and brings the timeline into view.
+    void renderFinal(finalPanel, attemptId, (sequence) => {
+        selectEvent(sequence);
+        document.getElementById("timeline-pane").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
     if (chosen.mode === "saved") {
         await loadSaved(attemptId);
     }
@@ -270,6 +314,16 @@ async function start() {
     setMode();
     syncPlayback();
 }
+// Filters only hide rows; playback and the map still cover every recorded event.
+filters.addEventListener("click", (event) => {
+    const chosen = event.target.closest("button[data-filter]");
+    if (!chosen) {
+        return;
+    }
+    timeline.dataset.filter = chosen.dataset.filter;
+    filters.querySelectorAll("button").forEach((button) => button.setAttribute("aria-pressed", String(button === chosen)));
+    revealSelected();
+});
 start().catch((error) => {
     status.textContent = `failed to load timeline: ${String(error)}`;
 });

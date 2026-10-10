@@ -160,10 +160,54 @@ def build_result(directory: Path, format: str = SCHEMA) -> dict[str, Any]:
     return _from_log(directory, read_attempt_history(directory, format))
 
 
+# Records that end the agent loop, and the recorded steps that can come right before one.
+STOP_TYPES = {"termination", "harness_error", "interruption"}
+STEP_TYPES = {"model.start", "model.outcome", "tool.start", "tool.outcome", "phase.enter", "node.enter",
+              "route.decision"}
+STEP_KEYS = ("model_call", "tool_name", "status", "phase", "node", "after_node", "next", "reason", "source")
+POSITION_KEYS = ("model_call", "loop_step", "graph_step_count")
+
+
+def stop_point(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Where the agent loop stopped: the first stop record, the last step recorded before it, and the
+    model call, loop step and graph step reached by then. None while no stop is recorded."""
+    index = next((i for i, event in enumerate(events) if event["type"] in STOP_TYPES), None)
+    if index is None:
+        return None
+    stop = events[index]
+    step = next((event for event in reversed(events[:index]) if event["type"] in STEP_TYPES), None)
+    position: dict[str, int] = {}
+    for event in events[:index]:
+        position.update({key: event["data"][key] for key in POSITION_KEYS
+                         if isinstance(event["data"].get(key), int)})
+    return {
+        "record": stop["type"], "sequence": stop["sequence"],
+        "reason": stop["data"].get("reason") or stop["data"].get("error"),
+        "step": None if step is None else {
+            "sequence": step["sequence"], "type": step["type"], "operation_id": step.get("operation_id"),
+            "data": {key: step["data"][key] for key in STEP_KEYS if key in step["data"]},
+        },
+        **position,
+    }
+
+
+def _token_total(usage_by_call: list[dict[str, Any]], key: str) -> int | None:
+    values = [usage[key] for usage in usage_by_call if isinstance(usage.get(key), int)]
+    return sum(values) if values else None
+
+
 def final_results(directory: Path, format: str = SCHEMA) -> dict[str, Any]:
     """Final facts only: never a selected point's state."""
     result = build_result(directory, format)
+    metadata = result["metadata"]
+    usage = metadata.get("usage_by_call", [])
     return {
+        "cost": metadata.get("cost", {"estimated": UNAVAILABLE_MONEY, "reported": UNAVAILABLE_MONEY}),
+        "model_calls": metadata.get("model_call_count"),
+        "tokens": {"input": _token_total(usage, "prompt_tokens"), "output": _token_total(usage, "completion_tokens"),
+                   "calls_with_usage": len(usage)},
+        "duration_seconds": result.get("duration_seconds"),
+        "stop": stop_point(read_attempt_history(Path(directory), format).events),
         "termination_reason": result["termination_reason"],
         "functional_verdict": result["functional_verdict"],
         "failure_category": result.get("failure_category"),

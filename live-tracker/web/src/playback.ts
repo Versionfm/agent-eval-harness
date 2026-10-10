@@ -33,6 +33,36 @@ export class Playback {
         this.play();
       }
     });
+    document.addEventListener("keydown", (event) => this.shortcut(event));
+  }
+
+  // Keyboard: arrows step, Space plays or pauses, Home and End jump. Fields keep their own keys, and Space
+  // stays with a focused button or map node.
+  private shortcut(event: KeyboardEvent): void {
+    const target = event.target as Element;
+    if (event.altKey || event.ctrlKey || event.metaKey || target.closest("input, select, textarea, [contenteditable]")) {
+      return;
+    }
+    if (event.key === " " && target.closest("button, a, [role=button]")) {
+      return;
+    }
+    const actions: Record<string, () => void> = {
+      ArrowLeft: () => this.step(-1),
+      ArrowRight: () => this.step(1),
+      " ": () => this.toggle(),
+      Home: () => this.seek(0),
+      End: () => this.seek(this.count - 1),
+    };
+    const action = actions[event.key];
+    if (action) {
+      event.preventDefault();
+      action();
+    }
+  }
+
+  private showPlaying(playing: boolean): void {
+    this.controls.play.dataset.playing = String(playing);
+    this.controls.play.querySelector(".label")!.textContent = playing ? "Pause" : "Play";
   }
 
   // Called by the timeline after any change to the selection or the recorded events.
@@ -43,8 +73,8 @@ export class Playback {
     this.controls.scrub.value = String(index + 1);
     this.controls.position.textContent = count === 0
       ? "no events recorded yet"
-      : `#${sequence ?? "?"} (event ${index + 1} of ${count})`;
-    this.controls.play.textContent = this.timer === undefined ? "Play" : "Pause";
+      : `#${sequence ?? "?"} · ${index + 1} of ${count}`;
+    this.showPlaying(this.timer !== undefined);
     this.controls.play.disabled = count === 0;
   }
 
@@ -79,7 +109,7 @@ export class Playback {
       this.move(0);
     }
     this.schedule();
-    this.controls.play.textContent = "Pause";
+    this.showPlaying(true);
   }
 
   pause(): void {
@@ -87,7 +117,7 @@ export class Playback {
       window.clearTimeout(this.timer);
       this.timer = undefined;
     }
-    this.controls.play.textContent = "Play";
+    this.showPlaying(false);
   }
 
   private schedule(): void {

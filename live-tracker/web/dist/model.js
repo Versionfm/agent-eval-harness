@@ -78,3 +78,16 @@ export function selectedPointState(events, sequence) {
     }
     return found;
 }
+// The timeline filter and colour group of an event type.
+export function categoryOf(type) {
+    if (type.startsWith("model.")) {
+        return "model";
+    }
+    if (type.startsWith("tool.")) {
+        return "tool";
+    }
+    if (type === "phase.enter" || type === "route.decision" || type.startsWith("node.")) {
+        return "flow";
+    }
+    return type === "state" ? "state" : "lifecycle";
+}

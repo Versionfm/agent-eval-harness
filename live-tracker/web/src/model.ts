@@ -120,3 +120,17 @@ export function selectedPointState(events: TrackerEvent[], sequence: number): Tr
   }
   return found;
 }
+
+// The timeline filter and colour group of an event type.
+export function categoryOf(type: string): "model" | "tool" | "flow" | "state" | "lifecycle" {
+  if (type.startsWith("model.")) {
+    return "model";
+  }
+  if (type.startsWith("tool.")) {
+    return "tool";
+  }
+  if (type === "phase.enter" || type === "route.decision" || type.startsWith("node.")) {
+    return "flow";
+  }
+  return type === "state" ? "state" : "lifecycle";
+}
