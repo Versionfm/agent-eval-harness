@@ -173,6 +173,20 @@ code {
   background: var(--match);
 }
 
+#timeline .operation-status {
+  color: var(--muted);
+  font-style: italic;
+}
+
+#timeline li.waiting .operation-status {
+  color: var(--accent);
+}
+
+#timeline li.unresolved .operation-status {
+  color: var(--warning);
+  font-weight: 600;
+}
+
 #timeline .sequence {
   color: var(--muted);
   min-width: 3em;

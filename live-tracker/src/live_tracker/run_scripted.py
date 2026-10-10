@@ -1,8 +1,10 @@
-"""Run a scripted read-then-complete Python attempt and serve its live timeline.
+"""Run a scripted attempt through either orchestrator and serve its live timeline.
 
 Usage: PYTHONPATH=live-tracker/src python -m live_tracker.run_scripted [--port N]
+       [--orchestrator python-loop|langgraph] [--scenario read|workbench]
 The viewer URL is printed before the attempt starts. The server keeps running
 after the attempt finishes so the saved timeline can be inspected; Ctrl+C stops it.
+No provider is contacted: the model is a finite script.
 """
 
 from __future__ import annotations
@@ -73,6 +75,7 @@ def run_attempt(
     model: ScriptedModel | None = None,
     event_sink: AttemptEventSink | None = None,
     scenario: str = "read",
+    orchestrator: str = "python-loop",
 ) -> dict[str, Any]:
     return attempt_and_evaluate(
         admitted_task=AdmittedTask.from_evidence(admission_evidence, source_repository=source_repository),
@@ -80,6 +83,7 @@ def run_attempt(
         model_config=ModelConfig(provider="scripted", requested_model="scripted-read-then-complete-v1"),
         budgets=AttemptBudgets(max_model_calls=4, shell_timeout_seconds=60),
         artifact_directory=output_dir,
+        orchestrator=orchestrator,
         event_sink=event_sink,
     )
 
@@ -98,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8765, help="loopback port; 0 picks a free one")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS), default="read",
                         help="scripted model: read (one read, then complete) or workbench (every inspector field)")
+    parser.add_argument("--orchestrator", choices=["python-loop", "langgraph"], default="python-loop",
+                        help="explicit Python loop or the LangGraph workflow (same events, node transitions)")
     args = parser.parse_args(argv)
 
     output_dir = (args.output_dir or _default_output_directory()).expanduser().resolve()
@@ -110,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         result = run_attempt(
             admission_evidence=args.admission_evidence, source_repository=args.source_repository,
             output_dir=output_dir, event_sink=recorder, scenario=args.scenario,
+            orchestrator=args.orchestrator,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         server.shutdown()

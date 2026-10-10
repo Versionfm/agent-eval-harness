@@ -4,7 +4,7 @@ import { buildComponentMap, updateComponentCounts } from "./components.js";
 import { follow } from "./connection.js";
 import { el } from "./dom.js";
 import { Inspector } from "./inspector.js";
-import { COMPONENTS, componentOf } from "./model.js";
+import { COMPONENTS, OPERATION_STARTS, componentOf } from "./model.js";
 const timeline = document.getElementById("timeline");
 const status = document.getElementById("status");
 const detail = document.getElementById("detail");
@@ -22,6 +22,7 @@ let lastSequence = 0;
 let selectedSequence = null;
 let activeComponent = null;
 let recording = null;
+// Recording completeness is shown apart from the verdict and termination reason.
 function describeRecording(next) {
     const first = next.problems[0];
     switch (next.state) {
@@ -37,23 +38,12 @@ function describeRecording(next) {
             return "";
     }
 }
-// Start records without an outcome: awaiting while the attempt is open, unresolved once it stopped.
-function labelOperations() {
-    const pending = new Set(recording?.unresolved_operations ?? []);
-    const label = recording?.state === "open" ? "awaiting outcome" : "unresolved";
-    timeline.querySelectorAll("li[data-operation]").forEach((row) => {
-        const state = row.querySelector(".operation-state");
-        if (state) {
-            state.textContent = pending.has(row.dataset.operation ?? "") ? label : "";
-        }
-    });
-}
 function applyRecording(next) {
     recording = next;
     const text = describeRecording(next);
     banner.textContent = text;
     banner.hidden = text === "";
-    labelOperations();
+    markRows();
 }
 function describe(event) {
     const data = event.data;
@@ -64,6 +54,13 @@ function describe(event) {
             return `initial context with ${data.message_count} messages`;
         case "phase.enter":
             return `phase ${data.phase} (loop step ${data.loop_step})`;
+        case "node.enter":
+            return `graph node ${data.node} entered (graph step ${data.graph_step_count})`;
+        case "node.outcome":
+            return `graph node ${data.node} finished (graph step ${data.graph_step_count})` +
+                (data.termination_reason ? `; stop ${data.termination_reason}` : "");
+        case "route.decision":
+            return `router after ${data.after_node}: ${data.next} (${data.reason})`;
         case "state":
             return `state: ${data.model_calls ?? "?"} model calls, ${data.context_bytes ?? "?"} context bytes`;
         case "model.start":
@@ -90,9 +87,8 @@ function buildRow(event) {
     if (event.operation_id) {
         button.append(el("code", "", event.operation_id));
     }
-    if (event.operation_id && event.type.endsWith(".start")) {
-        row.dataset.operation = event.operation_id;
-        button.append(el("span", "operation-state"));
+    if (OPERATION_STARTS.has(event.type)) {
+        button.append(el("span", "operation-status"));
     }
     button.addEventListener("click", () => selectEvent(event.sequence));
     row.append(button);
@@ -117,10 +113,12 @@ function onAccepted(event, accepted) {
     const row = buildRow(event);
     rows.set(event.sequence, row);
     timeline.append(row);
-    labelOperations();
     updateComponentCounts(components, events);
     if (trackingLatest) {
         selectEvent(event.sequence);
+    }
+    else {
+        markRows();
     }
 }
 function onProgress(progress) {
@@ -130,7 +128,13 @@ function onProgress(progress) {
     const behind = Math.max(progress.latest - progress.displayed, 0);
     lag.textContent = `displayed #${progress.displayed} · latest #${progress.latest} · lag ${behind}`;
 }
+// A start with no recorded outcome is waiting while the attempt runs, and unresolved once it has finished.
 function markRows() {
+    // A recording that stopped without an outcome can no longer deliver one: its starts are unresolved.
+    const stopped = events.some((event) => event.type === "attempt_finished")
+        || ["failed", "corrupt", "interrupted"].includes(recording?.state ?? "");
+    const closed = new Set(events.filter((event) => event.operation_id && !OPERATION_STARTS.has(event.type))
+        .map((event) => event.operation_id));
     for (const event of events) {
         const row = rows.get(event.sequence);
         if (!row) {
@@ -138,6 +142,14 @@ function markRows() {
         }
         row.classList.toggle("selected", event.sequence === selectedSequence);
         row.classList.toggle("match", activeComponent !== null && componentOf(event) === activeComponent);
+        if (!OPERATION_STARTS.has(event.type)) {
+            continue;
+        }
+        const outcome = closed.has(event.operation_id);
+        const label = outcome ? "" : stopped ? "unresolved" : "waiting";
+        row.classList.toggle("unresolved", label === "unresolved");
+        row.classList.toggle("waiting", label === "waiting");
+        row.querySelector(".operation-status").textContent = label;
     }
 }
 function selectEvent(sequence) {

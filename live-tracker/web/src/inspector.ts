@@ -1,7 +1,7 @@
 // Inspector (right pane): selected event or component, selected-point state, retained artifacts.
 // Evidence is rendered with textContent. Excerpts are labelled; full output stays one link away.
 
-import { ARTIFACT_PATH, ComponentInfo, TrackerEvent, selectedPointState } from "./model.js";
+import { ARTIFACT_PATH, ComponentInfo, OPERATION_STARTS, TrackerEvent, selectedPointState } from "./model.js";
 import { block, display, el, kv } from "./dom.js";
 
 const EXCERPT_CHARS = 2000;
@@ -51,6 +51,11 @@ export class Inspector {
     kv(root, "elapsed_seconds", event.elapsed_seconds);
     kv(root, "operation_id", event.operation_id);
     kv(root, "parent_operation_id", event.parent_operation_id);
+    if (OPERATION_STARTS.has(event.type)) {
+      const outcome = events.find((item) => item.operation_id === event.operation_id && !OPERATION_STARTS.has(item.type));
+      kv(root, "outcome", outcome ? `recorded at #${outcome.sequence} (${outcome.type})`
+        : "not recorded: waiting, or unresolved once the attempt has finished");
+    }
     try {
       await this.renderBody(root, event);
     } catch (error) {
@@ -69,8 +74,10 @@ export class Inspector {
       root.append(el("p", "note", "No state recorded at or before this selection yet."));
     } else {
       const data = source.data;
-      root.append(el("p", "note",
-        `from state event #${source.sequence} (loop step ${display(data.loop_step)}, after ${display(data.after_phase)}); later events are not used`));
+      const where = data.after_node !== undefined
+        ? `graph step ${display(data.graph_step_count)}, after node ${display(data.after_node)}`
+        : `loop step ${display(data.loop_step)}, after ${display(data.after_phase)}`;
+      root.append(el("p", "note", `from state event #${source.sequence} (${where}); later events are not used`));
       kv(root, "model calls", `${display(data.model_calls)} / ${display(data.max_model_calls)}`);
       kv(root, "context bytes", `${display(data.context_bytes)} / ${display(data.max_context_bytes)}`);
       kv(root, "tool result messages", data.tool_result_messages);
@@ -111,21 +118,11 @@ export class Inspector {
   private async renderBody(root: HTMLElement, event: TrackerEvent): Promise<void> {
     const data = event.data;
     switch (event.type) {
-      case "phase.enter": {
-        kv(root, "phase", data.phase);
-        kv(root, "loop_step", data.loop_step);
-        kv(root, "source", data.source);
-        const link = el("a", "", "registered source record (JSON)");
-        link.dataset.source = data.source;
-        link.href = `/api/sources?identity=${encodeURI(String(data.source))}`;
-        link.target = "_blank";
-        link.rel = "noopener";
-        const linkLine = el("p");
-        linkLine.append(link);
-        root.append(linkLine);
-        await this.attachSource(root, data.source);
-        return;
-      }
+      case "phase.enter":
+      case "node.enter":
+      case "node.outcome":
+      case "route.decision":
+        return this.renderSourced(root, event);
       case "model.start":
         kv(root, "model_call", data.model_call);
         kv(root, "message_count", data.message_count);
@@ -143,6 +140,27 @@ export class Inspector {
       default:
         block(root, "data", data);
     }
+  }
+
+  // Phase, graph node and router events name the registered source function that produced them.
+  private async renderSourced(root: HTMLElement, event: TrackerEvent): Promise<void> {
+    const data = event.data;
+    for (const key of ["phase", "node", "after_node", "next", "reason", "loop_step", "graph_step_count",
+      "termination_reason", "max_graph_steps"]) {
+      if (data[key] !== undefined) {
+        kv(root, key, data[key]);
+      }
+    }
+    kv(root, "source", data.source);
+    const link = el("a", "", "registered source record (JSON)");
+    link.dataset.source = data.source;
+    link.href = `/api/sources?identity=${encodeURI(String(data.source))}`;
+    link.target = "_blank";
+    link.rel = "noopener";
+    const linkLine = el("p");
+    linkLine.append(link);
+    root.append(linkLine);
+    await this.attachSource(root, data.source);
   }
 
   private async renderModelOutcome(root: HTMLElement, event: TrackerEvent): Promise<void> {

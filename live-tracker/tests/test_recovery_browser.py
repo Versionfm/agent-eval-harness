@@ -57,16 +57,16 @@ class RecoveryBrowserTests(unittest.TestCase):
                     page.wait_for_selector("#recording:not([hidden])", timeout=30_000)
                     failed_banner = page.inner_text("#recording")
                     failed_status = page.inner_text("#status")
-                    failed_label = page.inner_text('li[data-operation="tool-1-1"] .operation-state')
+                    failed_label = page.inner_text('li[data-type="tool.start"] .operation-status')
                     page.goto(interrupted_url)
-                    page.wait_for_selector('li[data-operation="model-1"] .operation-state', timeout=30_000)
+                    page.wait_for_selector('li[data-type="model.start"] .operation-status', timeout=30_000)
                     page.wait_for_function(
                         "document.querySelector('#recording') && "
                         "document.querySelector('#recording').textContent.includes('incomplete')",
                         timeout=30_000,
                     )
                     interrupted_banner = page.inner_text("#recording")
-                    interrupted_label = page.inner_text('li[data-operation="model-1"] .operation-state')
+                    interrupted_label = page.inner_text('li[data-type="model.start"] .operation-status')
                 finally:
                     browser.close()
 

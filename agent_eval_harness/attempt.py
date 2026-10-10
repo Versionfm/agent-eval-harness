@@ -323,8 +323,9 @@ def attempt_and_evaluate(
 ) -> dict[str, Any]:
     """Execute an explicit tool loop, capture its patch, and score a fresh defect copy.
 
-    An optional event_sink observes model/tool starts and outcomes. Mandatory
-    emits are synchronous: if one raises, no further model or tool operation runs.
+    An optional event_sink observes phases or graph nodes and routing, model/tool
+    starts and outcomes, and selected-point state. Mandatory emits are synchronous:
+    if one raises, no further node, model or tool operation runs.
     """
     sink: AttemptEventSink = NULL_EVENT_SINK if event_sink is None else event_sink
     artifact_directory = artifact_directory.expanduser().resolve()
@@ -337,8 +338,6 @@ def attempt_and_evaluate(
         raise ValueError("attempt artifacts must be outside the pinned source repository")
     if orchestrator not in {"python-loop", "langgraph"}:
         raise ValueError("orchestrator must be 'python-loop' or 'langgraph'")
-    if orchestrator == "langgraph" and event_sink is not None:
-        raise ValueError("event_sink currently observes only the python-loop orchestrator")
 
     task_repository = artifact_directory / "task-repository"
     trace: list[dict[str, Any]] = []
@@ -453,6 +452,15 @@ def attempt_and_evaluate(
                 {"messages.json": json_artifact(messages)},
             )
 
+            def snapshot_state(
+                current_messages: list[dict[str, Any]], current_count: int
+            ) -> dict[str, Any]:
+                return _selected_point_state(
+                    current_messages, current_count, budgets=budgets,
+                    usage_records=usage_records, trace=trace,
+                )
+
+            snapshot = None if sink is NULL_EVENT_SINK else snapshot_state
             termination = "harness_error"
             if orchestrator == "langgraph":
                 from agent_eval_harness.langgraph_attempt import run_attempt_graph
@@ -476,6 +484,7 @@ def attempt_and_evaluate(
                         result=result,
                         usage_records=usage_records,
                         model_call_count=state["model_call_count"],
+                        event_sink=sink,
                     )
                     return {
                         "messages": graph_messages[previous_count:],
@@ -498,6 +507,7 @@ def attempt_and_evaluate(
                         budgets=budgets,
                         work_deadline=work_deadline,
                         trace=trace,
+                        event_sink=sink,
                     )
                     return {
                         "messages": graph_messages[previous_count:],
@@ -511,6 +521,8 @@ def attempt_and_evaluate(
                     model_step=graph_model_step,
                     tool_step=graph_tool_step,
                     max_graph_steps=graph_step_limit,
+                    event_sink=sink,
+                    snapshot=snapshot,
                 )
                 messages = graph_state["messages"]
                 model_call_count = graph_state["model_call_count"]
@@ -562,20 +574,12 @@ def attempt_and_evaluate(
                         event_sink=sink,
                     )
 
-                def snapshot_python_state(
-                    current_messages: list[dict[str, Any]], current_count: int
-                ) -> dict[str, Any]:
-                    return _selected_point_state(
-                        current_messages, current_count, budgets=budgets,
-                        usage_records=usage_records, trace=trace,
-                    )
-
                 termination, model_call_count = run_python_loop(
                     messages,
                     request_model=request_python_turn,
                     execute_tools=execute_python_turn,
                     event_sink=sink,
-                    snapshot=None if sink is NULL_EVENT_SINK else snapshot_python_state,
+                    snapshot=snapshot,
                 )
 
             result["termination_reason"] = termination

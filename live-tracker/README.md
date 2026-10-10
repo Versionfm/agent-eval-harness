@@ -1,6 +1,6 @@
 # Live tracker
 
-Dedicated home for live observation and recorded playback of harness attempts. Specification: [issue #10](https://github.com/Versionfm/agent-eval-harness/issues/10). Status: tickets [#11](https://github.com/Versionfm/agent-eval-harness/issues/11) (one scripted Python attempt observed live), [#12](https://github.com/Versionfm/agent-eval-harness/issues/12) (interrupted recordings and recorder-failure handling), [#13](https://github.com/Versionfm/agent-eval-harness/issues/13) (the workbench: component map, timeline and inspector) and [#17](https://github.com/Versionfm/agent-eval-harness/issues/17) (reconnect, catch-up, bounded delivery and lag) implemented. Playback (#14), the LangGraph integration (#15), mutation capture (#16) and the live comparison pair (#18) are deferred. The call chain and the selected-point experiment are in [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md).
+Dedicated home for live observation and recorded playback of harness attempts. Specification: [issue #10](https://github.com/Versionfm/agent-eval-harness/issues/10). Status: tickets [#11](https://github.com/Versionfm/agent-eval-harness/issues/11) (one scripted Python attempt observed live), [#12](https://github.com/Versionfm/agent-eval-harness/issues/12) (interrupted recordings and recorder-failure handling), [#13](https://github.com/Versionfm/agent-eval-harness/issues/13) (the workbench: component map, timeline and inspector), [#15](https://github.com/Versionfm/agent-eval-harness/issues/15) (LangGraph node, router and state transitions through the same sink and workbench) and [#17](https://github.com/Versionfm/agent-eval-harness/issues/17) (reconnect, catch-up, bounded delivery and lag) implemented. Playback and legacy adapters (#14), mutation capture (#16) and the live comparison pair (#18) are deferred. The call chain and the selected-point experiment are in [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md).
 
 ## Reproduce the recovery behaviors (no provider, no Docker)
 
@@ -93,13 +93,36 @@ Not claimed: power loss, kernel or hardware faults, filesystems or network mount
 
 Fault injection goes through the recorder boundary: `FaultyStorage(kind, event_type, occurrence=, tear=, fail_marker=)` replaces the durable storage. The Docker tests (`tests/test_recording_faults_docker.py`) inject failures into real scripted attempts and check that no later model or tool operation runs.
 
+## LangGraph node transitions (#15)
+
+The same sink and workbench observe `orchestrator="langgraph"`. Each graph node is recorded where it runs: `node.enter` before the node (`operation_id` `graph-step-N`, `node`, `graph_step_count`, `source`), `node.outcome` after it, a `state` snapshot with `after_node`, and a `route.decision` (`next`, `reason`) from the router. Model and tool events are the shared ones. A node that raised has no outcome and shows as `unresolved` once the attempt finishes. Graph steps are not model calls, and the graph-step cap is unchanged. Source walkthrough: [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md#langgraph-source-walkthrough-15).
+
+No-provider reproduction (Docker and the admitted task; the scripted model is finite):
+
+```bash
+PYTHONPATH=live-tracker/src python -m live_tracker.run_scripted --orchestrator langgraph --scenario workbench \
+  --admission-evidence <admission.json> --source-repository /path/to/prompt-engineering-group-project
+```
+
+Tests: `test_langgraph_observation_docker.py` runs repair, tool-error-then-model-budget and spend-budget attempts for both orchestrators, observed and unobserved, and asserts identical model-visible requests, ordered tool results, candidate files and verdicts. `test_timeline_browser_docker.py` checks the LangGraph node rows, component counts, router and node source links in system Chrome. The offline checks are `tests/test_langgraph_observation.py` and `test_sources.py`.
+
+Observation overhead (no provider, scripted `workbench` scenario, observed and unobserved runs alternating):
+
+```bash
+PYTHONPATH=.:live-tracker/src python live-tracker/experiments/observation_overhead.py \
+  --admission-evidence <admission.json> --source-repository /path/to/prompt-engineering-group-project --repeats 3
+```
+
+Measured once with 3 repeats (Docker, `workbench` scenario, both attempts `agent_completed/failure`, which is expected for a scripted non-repair). Mean attempt wall time: python-loop 2.60 s observed vs 2.68 s unobserved; langgraph 2.53 s observed vs 2.67 s unobserved. The observed runs were not slower; the spread between runs (about 2.4 to 3.2 s) is larger than any difference, so no overhead is distinguishable at this size. Time inside `emit` (record, fsync, artifact writes) was 0.06 s per attempt for python-loop (25 emits, 2.4 MB recorded) and 0.07 s for langgraph (35 emits, 2.3 MB). The snapshot computation is outside `emit` and is not timed separately. These are small scripted attempts; larger attempts were not measured.
+
 ## Implemented in #11 versus deferred
 
 - Implemented: the sink contract on the Python loop; durable recorder with contiguous sequences and content-addressed artifacts; reader that ignores only an unterminated final record and raises on corruption; loopback server (`/`, `/static`, `/api/attempts`, events with `after`, confined artifacts, SSE with `Last-Event-ID` resume); minimal TypeScript timeline; the scripted runner; observation-on/off parity test; system-Chrome browser test.
 - Implemented in #13: `phase.enter` (module:function source identity) and `state` events from the Python loop, registered source identities with `/api/sources`, the workbench (component map, timeline, inspector with selected-point state and labelled excerpts), the `workbench` scripted scenario and a system-Chrome acceptance test against a Docker attempt (`tests/test_timeline_browser_docker.py`, which keeps its #11 file name).
 - Implemented in #12: torn-tail, unresolved-operation, damaged-record and recorder-failure states in the reader, server and browser; the harness stop-on-recording-failure with separate recording status; the no-provider demo; fault-injection tests through real attempts; the Chrome recovery test.
 - Implemented in #17: cursor refusals, catch-up and handoff, client dedupe and gaps, bounded per-connection buffering with slow-consumer disconnect, connection state and lag (see above).
-- Deferred: LangGraph observation (#15; passing a sink with `langgraph` is refused), mutation capture (#16), legacy recording adapters and playback controls (#14), provider streaming, evaluation and report phase events, and a recording-status line in the static HTML report (the report shows only the harness error).
+- Implemented in #15: `node.enter`, `node.outcome`, `route.decision` and graph `state` events from `run_attempt_graph`; the LangGraph component entries (model node, tool node, router) with registered source links; `run_scripted --orchestrator langgraph`; the LangGraph Docker parity, browser and overhead checks described above. The sink is no longer refused for `langgraph`.
+- Deferred: mutation capture (#16), legacy recording adapters and playback controls (#14), provider streaming, evaluation and report phase events, and a recording-status line in the static HTML report (the report shows only the harness error). The report is not yet re-rendered from the log (#14).
 
 Read the [published tickets](docs/TICKETS.md), [specification](docs/SPEC.md), [design](docs/DESIGN.md), [learning sequence](docs/LEARNING_PLAN.md) and [decision interview](../docs/observability-interview.md). The disposable [layout prototype](../../harness-viewer-prototype.html?variant=A) is outside the production source tree. Its original builder/template and verdict are captured on local branch `prototype/live-tracker-layout` at `0024ce6243b62b31b2f6121758d2bbb0e9a44bb0`; this throwaway branch has not been pushed.
 
