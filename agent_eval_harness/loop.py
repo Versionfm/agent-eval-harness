@@ -13,7 +13,22 @@ from agent_eval_harness.model import (
     ModelAdapter, ModelConfig, ModelRequest, ModelResponse, RequestBudgetExceeded,
     RetryableProviderError,
 )
+from agent_eval_harness.observation import NULL_EVENT_SINK, AttemptEventSink, json_artifact
 from agent_eval_harness.persistence import _record
+
+
+def _record_model_outcome(
+    event_sink: AttemptEventSink, operation_id: str, trace: list[dict[str, Any]], **data: Any
+) -> dict[str, Any]:
+    """Record a model outcome in the trace and publish it under its start's operation id."""
+    event = _record(trace, "model", **data)
+    payload = {
+        key: value for key, value in event.items()
+        if key not in {"event_id", "timestamp", "request_messages", "response"}
+    }
+    artifacts = {"response.json": json_artifact(event["response"])} if "response" in event else None
+    event_sink.emit("model.outcome", payload, artifacts, operation_id=operation_id)
+    return event
 
 
 class ModelCallDeadlineExceeded(TimeoutError):
@@ -56,6 +71,7 @@ def _request_model_turn(
     result: dict[str, Any],
     usage_records: list[dict[str, Any]],
     model_call_count: int,
+    event_sink: AttemptEventSink = NULL_EVENT_SINK,
 ) -> tuple[ModelResponse | None, int, str | None]:
     """Run one shared model node, including deadline, context, and retry policy."""
     if time.monotonic() >= work_deadline:
@@ -101,6 +117,12 @@ def _request_model_turn(
             timeout_seconds=work_deadline - time.monotonic(),
         )
         model_call_count += 1
+        operation_id = f"model-{model_call_count}"
+        # Outside the provider try: a failed start record must stop before the provider call.
+        event_sink.emit(
+            "model.start", {"model_call": model_call_count, "message_count": len(request.messages)},
+            {"request.json": json_artifact(request.messages)}, operation_id=operation_id,
+        )
         call_started = time.monotonic()
         try:
             response = _complete_with_deadline(model, request, work_deadline - call_started)
@@ -116,8 +138,8 @@ def _request_model_turn(
                     "status": "unavailable",
                     "error": f"{type(snapshot_error).__name__}: {snapshot_error}",
                 }
-            _record(
-                trace, "model", model_call=model_call_count, status="budget_stopped",
+            _record_model_outcome(
+                event_sink, operation_id, trace, model_call=model_call_count, status="budget_stopped",
                 duration_seconds=round(duration, 6), request_messages=request.messages,
                 error=f"{type(exc).__name__}: {exc}", error_category="spending_budget",
                 retrying=False, spend_budget=budget_snapshot,
@@ -126,16 +148,16 @@ def _request_model_turn(
             _record(trace, "termination", reason=termination, model_calls=model_call_count)
         except ModelCallDeadlineExceeded as exc:
             duration = time.monotonic() - call_started
-            _record(
-                trace, "model", model_call=model_call_count, status="timeout",
+            _record_model_outcome(
+                event_sink, operation_id, trace, model_call=model_call_count, status="timeout",
                 duration_seconds=round(duration, 6), request_messages=request.messages,
                 error=f"{type(exc).__name__}: {exc}", error_category="attempt_deadline",
             )
             termination = "attempt_deadline"
         except KeyboardInterrupt as exc:
             duration = time.monotonic() - call_started
-            _record(
-                trace, "model", model_call=model_call_count, status="interrupted",
+            _record_model_outcome(
+                event_sink, operation_id, trace, model_call=model_call_count, status="interrupted",
                 duration_seconds=round(duration, 6), request_messages=request.messages,
                 error=f"{type(exc).__name__}: {exc}", error_category="interrupted",
             )
@@ -151,8 +173,8 @@ def _request_model_turn(
                 budgets.provider_retry_delay_seconds,
                 max(0.0, work_deadline - time.monotonic()),
             ) if can_retry else 0.0
-            _record(
-                trace, "model", model_call=model_call_count, status="error",
+            _record_model_outcome(
+                event_sink, operation_id, trace, model_call=model_call_count, status="error",
                 duration_seconds=round(duration, 6), request_messages=request.messages,
                 error=f"{type(exc).__name__}: {exc}",
                 error_category="retryable_provider_error", retrying=can_retry,
@@ -174,8 +196,8 @@ def _request_model_turn(
                 _record(trace, "termination", reason=termination, model_calls=model_call_count)
         except Exception as exc:
             duration = time.monotonic() - call_started
-            _record(
-                trace, "model", model_call=model_call_count, status="error",
+            _record_model_outcome(
+                event_sink, operation_id, trace, model_call=model_call_count, status="error",
                 duration_seconds=round(duration, 6), request_messages=request.messages,
                 error=f"{type(exc).__name__}: {exc}", error_category="provider_error",
                 retrying=False,
@@ -204,8 +226,8 @@ def _request_model_turn(
         "usage": usage,
         "observed_model": response.observed_model,
     }
-    _record(
-        trace, "model", model_call=model_call_count, status="ok",
+    _record_model_outcome(
+        event_sink, operation_id, trace, model_call=model_call_count, status="ok",
         duration_seconds=round(duration, 6), request_messages=request.messages,
         response=response_payload,
     )

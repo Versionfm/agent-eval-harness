@@ -30,6 +30,7 @@ from agent_eval_harness.model import (
     ScriptedModel,
     ToolCall,
 )
+from agent_eval_harness.observation import NULL_EVENT_SINK, AttemptEventSink, json_artifact
 from agent_eval_harness.paths import orchestration_root
 from agent_eval_harness.report import render_attempt_report
 
@@ -291,8 +292,14 @@ def attempt_and_evaluate(
     budgets: AttemptBudgets,
     artifact_directory: Path,
     orchestrator: str = "python-loop",
+    event_sink: AttemptEventSink | None = None,
 ) -> dict[str, Any]:
-    """Execute an explicit tool loop, capture its patch, and score a fresh defect copy."""
+    """Execute an explicit tool loop, capture its patch, and score a fresh defect copy.
+
+    An optional event_sink observes model/tool starts and outcomes. Mandatory
+    emits are synchronous: if one raises, no further model or tool operation runs.
+    """
+    sink: AttemptEventSink = NULL_EVENT_SINK if event_sink is None else event_sink
     artifact_directory = artifact_directory.expanduser().resolve()
     if artifact_directory.exists():
         raise ValueError(f"Artifact destination already exists: {artifact_directory}")
@@ -303,6 +310,8 @@ def attempt_and_evaluate(
         raise ValueError("attempt artifacts must be outside the pinned source repository")
     if orchestrator not in {"python-loop", "langgraph"}:
         raise ValueError("orchestrator must be 'python-loop' or 'langgraph'")
+    if orchestrator == "langgraph" and event_sink is not None:
+        raise ValueError("event_sink currently observes only the python-loop orchestrator")
 
     task_repository = artifact_directory / "task-repository"
     trace: list[dict[str, Any]] = []
@@ -388,6 +397,11 @@ def attempt_and_evaluate(
             )
             result["attempt_container_configuration"] = attempt_container.configuration
             result["metadata"]["attempt_repository"] = str(task_repository)
+            sink.emit("attempt_started", {
+                "task_id": admitted_task.task_id, "orchestrator": orchestrator,
+                "requested_model": model_config.requested_model, "provider": model_config.provider,
+                "budgets": _json_copy(budgets.__dict__),
+            })
 
             messages = _initial_context(admitted_task, task_repository)
             result["initial_context"] = copy.deepcopy(messages)
@@ -406,6 +420,10 @@ def attempt_and_evaluate(
                 message_count=len(messages),
                 tool_definitions=TOOL_DEFINITIONS,
                 messages=messages,
+            )
+            sink.emit(
+                "initial_context", {"message_count": len(messages), "tool_definitions": TOOL_DEFINITIONS},
+                {"messages.json": json_artifact(messages)},
             )
 
             termination = "harness_error"
@@ -498,6 +516,7 @@ def attempt_and_evaluate(
                         result=result,
                         usage_records=usage_records,
                         model_call_count=current_count,
+                        event_sink=sink,
                     )
 
                 def execute_python_turn(
@@ -513,6 +532,7 @@ def attempt_and_evaluate(
                         budgets=budgets,
                         work_deadline=work_deadline,
                         trace=trace,
+                        event_sink=sink,
                     )
 
                 termination, model_call_count = run_python_loop(
@@ -654,5 +674,15 @@ def attempt_and_evaluate(
         result["duration_seconds"] = round(time.monotonic() - started, 6)
         result["metadata"]["duration_seconds"] = result["duration_seconds"]
         result["metadata"]["finished_at"] = _timestamp()
+        sink.emit(
+            "attempt_finished", {
+                "termination_reason": result["termination_reason"],
+                "functional_verdict": result["functional_verdict"],
+                "failure_category": result.get("failure_category"),
+                "changed_files": result["candidate"].get("changed_files", []),
+                "checks": result["evaluation"].get("checks", {}),
+            },
+            {"candidate.patch": result["candidate"].get("patch", "").encode("utf-8")},
+        )
         _collect_artifacts(result, artifact_directory)
     return result
