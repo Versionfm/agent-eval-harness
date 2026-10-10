@@ -30,6 +30,9 @@ SCHEMA_VERSION = 1
 LOG_NAME = "events.jsonl"
 ARTIFACT_DIRECTORY = "artifacts"
 FAILURE_MARKER = "recording-failure.json"
+# One shared rule for operation pairing (web/src/model.ts mirrors the starts): a start without an outcome is unresolved.
+OPERATION_STARTS = frozenset({"model.start", "tool.start", "node.enter"})
+OPERATION_OUTCOMES = frozenset({"model.outcome", "tool.outcome", "node.outcome"})
 
 
 def _fsync_directory(directory: Path) -> None:

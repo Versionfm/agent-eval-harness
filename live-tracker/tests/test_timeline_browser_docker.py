@@ -37,9 +37,9 @@ EXPECTED_TYPES = [
     # turn 2: one failing read and one succeeding read in the same model response
     "phase.enter", "model.start", "model.outcome", "state",
     "phase.enter", "tool.start", "tool.outcome", "tool.start", "tool.outcome", "state",
-    # turn 3: completion
-    "phase.enter", "model.start", "model.outcome", "state",
-    "attempt_finished",
+    # turn 3: completion, then the recorded patch collection and evaluation
+    "phase.enter", "model.start", "model.outcome", "termination", "state",
+    "patch_collection", "evaluation", "attempt_finished",
 ]
 
 # The same three model turns and two tool turns, as the LangGraph workflow records them.
@@ -54,9 +54,9 @@ EXPECTED_GRAPH_TYPES = [
     # graph step 4: tool_execution runs the failing and the succeeding read in order
     "node.enter", "tool.start", "tool.outcome", "tool.start", "tool.outcome", "node.outcome", "state",
     "route.decision",
-    # graph step 5: completion ends the graph
-    "node.enter", "model.start", "model.outcome", "node.outcome", "state", "route.decision",
-    "attempt_finished",
+    # graph step 5: completion ends the graph, then the recorded patch collection and evaluation
+    "node.enter", "model.start", "model.outcome", "termination", "node.outcome", "state", "route.decision",
+    "patch_collection", "evaluation", "attempt_finished",
 ]
 
 
@@ -224,7 +224,7 @@ class WorkbenchBrowserDockerTests(unittest.TestCase):
         self.assertIn("tool_execution", inspector)
         self.assertIn("agent_eval_harness.tools:execute_tool_turn", inspector)
         link = page.get_attribute('#inspector a[data-source]', "href")
-        self.assertIn("/api/sources?identity=agent_eval_harness.tools:execute_tool_turn", link)
+        self.assertIn("/api/sources?identity=agent_eval_harness.tools%3Aexecute_tool_turn", link)
 
     def _check_graph_timeline(self, page):
         types = page.eval_on_selector_all(
@@ -274,7 +274,7 @@ class WorkbenchBrowserDockerTests(unittest.TestCase):
         self.assertIn("graph_step_count: 2", inspector)
         self.assertIn("outcome: recorded at", inspector)
         link = page.get_attribute('#inspector a[data-source]', "href")
-        self.assertIn("/api/sources?identity=agent_eval_harness.tools:execute_tool_turn", link)
+        self.assertIn("/api/sources?identity=agent_eval_harness.tools%3Aexecute_tool_turn", link)
 
     def _check_graph_model_and_tool_evidence(self, page, url):
         page.locator('#timeline li[data-type="model.outcome"]').nth(0).locator("button").click()

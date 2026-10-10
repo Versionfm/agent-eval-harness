@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from agent_eval_harness.admission import CHECK_IDS
 from agent_eval_harness.environment import EnvironmentFailure, run_canonical_checks
-from agent_eval_harness.persistence import _record
+from agent_eval_harness.observation import NULL_EVENT_SINK, AttemptEventSink
+from agent_eval_harness.persistence import _record_final
 
 if TYPE_CHECKING:
     from agent_eval_harness.attempt import AdmittedTask
@@ -121,9 +122,10 @@ def _materialize_snapshot(
 
 
 def _finalize_evaluation(
-    result: dict[str, Any], evaluation: dict[str, Any], trace: list[dict[str, Any]]
-) -> None:
-    """Apply the same evaluator-to-verdict mapping on normal and recovery paths."""
+    result: dict[str, Any], evaluation: dict[str, Any], trace: list[dict[str, Any]],
+    sink: AttemptEventSink = NULL_EVENT_SINK,
+) -> str | None:
+    """Apply the same evaluator-to-verdict mapping on normal and recovery paths; returns the failure category."""
     result["evaluation"] = evaluation
     checks = evaluation.get("checks")
     if evaluation.get("status") == "invalid_patch":
@@ -143,9 +145,8 @@ def _finalize_evaluation(
         verdict, category = "failure", "canonical_check_failure"
     result["functional_verdict"] = verdict
     result["failure_category"] = category
-    _record(
-        trace,
-        "evaluation",
+    _record_final(
+        trace, sink, "evaluation",
         status=evaluation.get("status"),
         failure_category=category,
         functional_verdict=verdict,
@@ -153,6 +154,7 @@ def _finalize_evaluation(
         error=evaluation.get("error"),
         container_configuration=evaluation.get("container_configuration", {}),
     )
+    return category
 
 
 def evaluate_candidate_changes(

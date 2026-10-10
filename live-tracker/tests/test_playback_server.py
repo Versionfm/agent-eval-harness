@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 from attempt_fixtures import CHECKS, PATCH, RESPONSE, record_attempt
+from live_tracker.legacy import LEGACY_FORMAT
 from live_tracker.server import make_server
 
 
@@ -29,9 +30,11 @@ class PlaybackServerTests(unittest.TestCase):
         self.unfinished = self.root / "unfinished"
         record_attempt(self.unfinished, finish=False)
         attempts = {"finished": self.finished, "unfinished": self.unfinished}
+        formats = {}
         if LEGACY_ROOT.is_dir():
             attempts["legacy"] = LEGACY_ROOT / "python-loop"
-        server = make_server(attempts, port=0)
+            formats["legacy"] = LEGACY_FORMAT
+        server = make_server(attempts, formats=formats, port=0)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)

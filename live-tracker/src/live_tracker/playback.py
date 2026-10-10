@@ -17,13 +17,15 @@ from pathlib import Path
 import sys
 from typing import Iterable
 
+from live_tracker.legacy import LEGACY_FORMAT
+from live_tracker.recorder import SCHEMA
 from live_tracker.server import make_server
 
 
-def registry(recordings: Iterable[Path] = (), legacy: Iterable[Path] = ()) -> dict[str, Path]:
-    """Attempt identities for saved directories; a path that is not a directory is refused."""
-    attempts: dict[str, Path] = {}
-    for kind, paths in (("recording", recordings), ("legacy", legacy)):
+def registry(recordings: Iterable[Path] = (), legacy: Iterable[Path] = ()) -> dict[str, tuple[Path, str]]:
+    """Attempt identities with their declared formats; a path that is not a directory is refused."""
+    attempts: dict[str, tuple[Path, str]] = {}
+    for kind, paths, fmt in (("recording", recordings, SCHEMA), ("legacy", legacy, LEGACY_FORMAT)):
         for path in paths:
             directory = Path(path).expanduser().resolve()
             if not directory.is_dir():
@@ -31,14 +33,16 @@ def registry(recordings: Iterable[Path] = (), legacy: Iterable[Path] = ()) -> di
             identity = f"{kind}-{directory.name}"
             if identity in attempts:
                 raise ValueError(f"two recordings are both named {identity}")
-            attempts[identity] = directory
+            attempts[identity] = (directory, fmt)
     if not attempts:
         raise ValueError("register at least one saved recording with --recording or --legacy")
     return attempts
 
 
 def make_playback_server(*, recordings: Iterable[Path] = (), legacy: Iterable[Path] = (), port: int = 0):
-    return make_server(registry(recordings, legacy), port=port)
+    attempts = registry(recordings, legacy)
+    return make_server({identity: directory for identity, (directory, _) in attempts.items()},
+                       formats={identity: fmt for identity, (_, fmt) in attempts.items()}, port=port)
 
 
 def main(argv: list[str] | None = None) -> int:

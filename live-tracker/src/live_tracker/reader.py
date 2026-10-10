@@ -2,7 +2,11 @@
 
 The reader returns the verified prefix, every problem it found, unresolved
 operations and the recording state. It never skips a damaged record silently,
-never appends, and never resumes or executes anything.
+never appends, and never resumes or executes anything. The format is declared by
+the caller (a preserved legacy trace is read only when registered as one).
+
+AttemptReader keeps the verified prefix between polls, so a live connection reads
+only bytes appended since its last poll. A full read is one fresh AttemptReader.
 """
 
 from __future__ import annotations
@@ -15,7 +19,9 @@ import re
 from typing import Any
 
 from live_tracker.legacy import LABELS, LEGACY_FORMAT, TRACE_NAME, read_legacy_events
-from live_tracker.recorder import ARTIFACT_DIRECTORY, FAILURE_MARKER, LOG_NAME, SCHEMA, SCHEMA_VERSION
+from live_tracker.recorder import (
+    ARTIFACT_DIRECTORY, FAILURE_MARKER, LOG_NAME, OPERATION_OUTCOMES, OPERATION_STARTS, SCHEMA, SCHEMA_VERSION,
+)
 
 
 ARTIFACT_PATH = re.compile(rf"^{ARTIFACT_DIRECTORY}/[0-9a-f]{{64}}$")
@@ -52,8 +58,8 @@ def _problem(kind: str, sequence: int | None, detail: str) -> dict[str, Any]:
     return {"kind": kind, "sequence": sequence, "detail": detail}
 
 
-def _record_problem(event: Any, sequence: int, attempt_id: str | None,
-                    starts: dict[str, str], outcomes: set[str]) -> dict[str, Any] | None:
+def _record_problem(event: Any, sequence: int, attempt_id: str | None, started: set[str],
+                    outcomes: set[str], pending: dict[str, str]) -> dict[str, Any] | None:
     """Structural checks that end the verified prefix at this record."""
     if not isinstance(event, dict):
         return _problem("malformed", sequence, "record is not a JSON object")
@@ -73,14 +79,16 @@ def _record_problem(event: Any, sequence: int, attempt_id: str | None,
     # Only a repeated operation identity is a conflict. Records without one, and outcomes whose start
     # is absent, are shown as recorded: they cannot be paired, so they are never reported unresolved.
     operation = event.get("operation_id")
-    if isinstance(operation, str) and event["type"].endswith(".start"):
-        if operation in starts:
+    if isinstance(operation, str) and event["type"] in OPERATION_STARTS:
+        if operation in started:
             return _problem("identity_conflict", sequence, f"operation {operation} started twice")
-        starts[operation] = event["type"]
-    elif isinstance(operation, str) and event["type"].endswith(".outcome"):
+        started.add(operation)
+        pending[operation] = event["type"]
+    elif isinstance(operation, str) and event["type"] in OPERATION_OUTCOMES:
         if operation in outcomes:
             return _problem("identity_conflict", sequence, f"operation {operation} has two outcomes")
         outcomes.add(operation)
+        pending.pop(operation, None)
     return None
 
 
@@ -121,62 +129,106 @@ def _read_failure(directory: Path, problems: list[dict[str, Any]]) -> dict[str, 
 
 def _legacy_history(directory: Path) -> AttemptHistory:
     """A preserved trace without an event log: read-only, labelled, and never resumed or appended."""
+    if not (directory / TRACE_NAME).is_file():
+        problem = _problem("missing_trace", None, f"legacy {TRACE_NAME} is missing")
+        return AttemptHistory("corrupt", [], [problem], 0, [], None, format=LEGACY_FORMAT, labels=LABELS)
     events, problems = read_legacy_events(directory)
     state = "corrupt" if problems else "legacy"
     return AttemptHistory(state, events, problems, 0, [], None, format=LEGACY_FORMAT, labels=LABELS)
 
 
-def read_attempt_history(directory: Path) -> AttemptHistory:
-    directory = Path(directory)
-    problems: list[dict[str, Any]] = []
-    failure = _read_failure(directory, problems)
-    log = directory / LOG_NAME
-    if not log.is_file():
-        if not failure and (directory / TRACE_NAME).is_file():
-            return _legacy_history(directory)
-        return AttemptHistory("failed" if failure else "empty", [], problems, 0, [], failure)
+class AttemptReader:
+    """The verified prefix of one attempt log, kept between polls.
 
-    # Only bytes after the last newline can be an interrupted append; they are not verified records.
-    head, separator, tail = log.read_bytes().rpartition(b"\n")
-    lines = head.split(b"\n") if separator else []
-    events: list[dict[str, Any]] = []
-    starts: dict[str, str] = {}
-    outcomes: set[str] = set()
-    attempt_id: str | None = None
-    for sequence, line in enumerate(lines, 1):
-        try:
-            event = json.loads(line)
-        except ValueError as exc:
-            problems.append(_problem("malformed", sequence, f"record is not valid JSON: {exc}"))
-            break
-        problem = _record_problem(event, sequence, attempt_id, starts, outcomes)
-        if problem:
-            problems.append(problem)
-            break
-        attempt_id = event["attempt_id"]
-        for artifact in event.get("artifacts", []):
-            integrity = _artifact_integrity(directory, artifact)
-            if isinstance(artifact, dict):
-                artifact["integrity"] = integrity
-            if integrity != "ok":
-                problems.append(_problem(
-                    f"{integrity}_artifact", sequence,
-                    f"artifact {artifact.get('role') if isinstance(artifact, dict) else '?'} is {integrity}",
-                ))
-        events.append(event)
+    poll() reads only the bytes appended since the previous call. If the log was replaced, truncated,
+    or ended at a damaged record, the reader starts again from the first byte, exactly as a full read does.
+    """
 
-    if failure and attempt_id is not None and failure.get("attempt_id") != attempt_id:
-        problems.append(_problem("identity_conflict", None, "failure marker belongs to another attempt"))
-    unresolved = [operation for operation in starts if operation not in outcomes]
-    finished = bool(events) and events[-1]["type"] == "attempt_finished"
-    if problems:
-        state = "corrupt"
-    elif failure:
-        state = "failed"
-    elif tail:
-        state = "interrupted"
-    elif finished:
-        state = "complete"
-    else:
-        state = "open"
-    return AttemptHistory(state, events, problems, len(tail), unresolved, failure)
+    def __init__(self, directory: Path, format: str = SCHEMA):
+        self.directory = Path(directory)
+        self.format = format
+        self._reset()
+
+    def _reset(self) -> None:
+        self.events: list[dict[str, Any]] = []
+        self.problems: list[dict[str, Any]] = []
+        self.tail_bytes = 0
+        self.offset = 0
+        self.inode: int | None = None
+        self.stopped = False
+        self.attempt_id: str | None = None
+        self.started: set[str] = set()
+        self.outcomes: set[str] = set()
+        self.pending: dict[str, str] = {}
+
+    def poll(self) -> AttemptHistory:
+        if self.format == LEGACY_FORMAT:
+            return _legacy_history(self.directory)
+        marker_problems: list[dict[str, Any]] = []
+        failure = _read_failure(self.directory, marker_problems)
+        log = self.directory / LOG_NAME
+        if not log.is_file():
+            self._reset()
+            return AttemptHistory("failed" if failure else "empty", [], marker_problems, 0, [], failure)
+        self._consume(log)
+
+        problems = [*marker_problems, *self.problems]
+        if failure and self.attempt_id is not None and failure.get("attempt_id") != self.attempt_id:
+            problems.append(_problem("identity_conflict", None, "failure marker belongs to another attempt"))
+        finished = bool(self.events) and self.events[-1]["type"] == "attempt_finished"
+        if problems:
+            state = "corrupt"
+        elif failure:
+            state = "failed"
+        elif self.tail_bytes:
+            state = "interrupted"
+        elif finished:
+            state = "complete"
+        else:
+            state = "open"
+        # The events list is shared with the reader, which only ever appends to it.
+        return AttemptHistory(state, self.events, problems, self.tail_bytes, list(self.pending), failure)
+
+    def _consume(self, log: Path) -> None:
+        stat = log.stat()
+        if self.stopped or stat.st_ino != self.inode or stat.st_size < self.offset:
+            self._reset()
+            self.inode = stat.st_ino
+        with log.open("rb") as handle:
+            handle.seek(self.offset)
+            data = handle.read()
+        # Only bytes after the last newline can be an interrupted append; they are not verified records.
+        head, separator, tail = data.rpartition(b"\n")
+        self.tail_bytes = len(tail) if separator else len(data)
+        if not separator:
+            return
+        for line in head.split(b"\n"):
+            sequence = len(self.events) + 1
+            try:
+                event = json.loads(line)
+            except ValueError as exc:
+                self.problems.append(_problem("malformed", sequence, f"record is not valid JSON: {exc}"))
+                self.stopped = True
+                return
+            problem = _record_problem(event, sequence, self.attempt_id, self.started, self.outcomes, self.pending)
+            if problem:
+                self.problems.append(problem)
+                self.stopped = True
+                return
+            self.attempt_id = event["attempt_id"]
+            for artifact in event.get("artifacts", []):
+                integrity = _artifact_integrity(self.directory, artifact)
+                if isinstance(artifact, dict):
+                    artifact["integrity"] = integrity
+                if integrity != "ok":
+                    self.problems.append(_problem(
+                        f"{integrity}_artifact", sequence,
+                        f"artifact {artifact.get('role') if isinstance(artifact, dict) else '?'} is {integrity}",
+                    ))
+            self.events.append(event)
+        self.offset += len(head) + 1
+
+
+def read_attempt_history(directory: Path, format: str = SCHEMA) -> AttemptHistory:
+    """A full read: the same verification as a live poll, from the first byte."""
+    return AttemptReader(directory, format).poll()

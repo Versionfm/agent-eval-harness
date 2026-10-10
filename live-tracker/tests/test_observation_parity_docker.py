@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agent_eval_harness.compare_report import _load_attempt
 from agent_eval_harness.observation import json_artifact
 from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder
@@ -58,12 +59,18 @@ class ObservationParityDockerTests(unittest.TestCase):
 
             history = read_attempt_history(observed_directory)
             self.assertEqual(history.state, "complete")
+            # The projection written after the run is what the comparison loader reads.
+            attempt = _load_attempt(observed_directory)
+            self.assertEqual(attempt["functional_verdict"], observed["functional_verdict"])
+            self.assertEqual(attempt["candidate"]["status"], "collected")
+            self.assertEqual(attempt["evaluation"]["checks"], observed["evaluation"]["checks"])
             events = history.events
             self.assertEqual(
                 [event["type"] for event in events],
                 ["attempt_started", "initial_context", "phase.enter", "model.start", "model.outcome",
                  "state", "phase.enter", "tool.start", "tool.outcome", "state",
-                 "phase.enter", "model.start", "model.outcome", "state", "attempt_finished"],
+                 "phase.enter", "model.start", "model.outcome", "termination", "state",
+                 "patch_collection", "evaluation", "attempt_finished"],
             )
             self.assertEqual(
                 [event["operation_id"] for event in events if "operation_id" in event],

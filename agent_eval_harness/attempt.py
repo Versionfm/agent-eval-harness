@@ -6,6 +6,7 @@ import copy
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 from pathlib import Path
 import shutil
 import tempfile
@@ -57,7 +58,7 @@ from agent_eval_harness.loop import (
     run_python_loop,
 )
 from agent_eval_harness.persistence import (
-    _collect_artifacts, _record, _timestamp,
+    _collect_artifacts, _record, _record_final, _timestamp,
 )
 from agent_eval_harness.prompt import build_initial_context as _initial_context
 from agent_eval_harness.provenance import (
@@ -203,64 +204,110 @@ def _finalize_accounting(
             }
 
 
+class _Sum:
+    """A running float total with the compensation Python's sum() applies (3.12+), so it equals sum(values)."""
+
+    def __init__(self) -> None:
+        self.count = 0
+        self._total = 0.0
+        self._compensation = 0.0
+
+    def add(self, value: float) -> None:
+        if self.count == 0:
+            self._total = value
+        else:
+            total = self._total + value
+            if abs(self._total) >= abs(value):
+                self._compensation += (self._total - total) + value
+            else:
+                self._compensation += (value - total) + self._total
+            self._total = total
+        self.count += 1
+
+    def value(self) -> float:
+        if self._compensation and math.isfinite(self._compensation):
+            return self._total + self._compensation
+        return self._total
+
+
+class _CostTally:
+    """Provider evidence totals. Each call consumes only the usage and trace records added since the last."""
+
+    def __init__(self) -> None:
+        self.usage_totals: dict[str, float] = {}
+        self._usage_seen = 0
+        self._trace_seen = 0
+        self._request_count = 0
+        self._billing_count = 0
+        self._estimates = _Sum()
+        self._reports = _Sum()
+
+    def consume(self, usage_records: list[dict[str, Any]], trace: list[dict[str, Any]]) -> None:
+        for event in trace[self._trace_seen:]:
+            if event.get("type") == "model" and event.get("status") != "budget_stopped":
+                self._request_count += 1
+        self._trace_seen = len(trace)
+        for usage in usage_records[self._usage_seen:]:
+            for key, value in usage.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    self.usage_totals[key] = self.usage_totals.get(key, 0) + value
+            billing = usage.get("billing") if isinstance(usage, dict) else None
+            if not isinstance(billing, dict):
+                continue
+            self._billing_count += 1
+            estimate = billing.get("estimated_cost", {})
+            if (isinstance(estimate, dict) and estimate.get("status") == "estimated"
+                    and isinstance(estimate.get("amount"), (int, float))):
+                self._estimates.add(float(estimate["amount"]))
+            report = billing.get("reported_cost", {})
+            if (isinstance(report, dict) and report.get("status") == "reported"
+                    and isinstance(report.get("amount"), (int, float))):
+                self._reports.add(float(report["amount"]))
+        self._usage_seen = len(usage_records)
+
+    def summary(self) -> dict[str, Any]:
+        """Summarize provider evidence without turning missing usage into charges."""
+        if not self._billing_count:
+            unavailable = {"status": "unavailable", "amount": None, "currency": "USD"}
+            return {"reported": dict(unavailable), "estimated": dict(unavailable)}
+        count = self._request_count
+        missing = max(0, count - self._estimates.count)
+        if self._estimates.count:
+            estimated = {
+                "status": "partial" if missing else "estimated",
+                "amount": round(self._estimates.value(), 12),
+                "currency": "USD",
+                "missing_usage_calls": missing,
+                "request_count": count,
+            }
+        else:
+            estimated = {
+                "status": "unavailable", "amount": None, "currency": "USD",
+                "missing_usage_calls": count,
+                "request_count": count,
+            }
+        missing_reports = max(0, count - self._reports.count)
+        if self._reports.count:
+            reported = {
+                "status": "partial" if missing_reports else "reported",
+                "amount": round(self._reports.value(), 12),
+                "currency": "USD",
+                "missing_charge_calls": missing_reports,
+                "request_count": count,
+            }
+        else:
+            reported = {
+                "status": "unavailable", "amount": None, "currency": "USD",
+                "missing_charge_calls": count,
+                "request_count": count,
+            }
+        return {"reported": reported, "estimated": estimated}
+
+
 def _cost_summary(usage_records: list[dict[str, Any]], trace: list[dict[str, Any]]) -> dict[str, Any]:
-    """Summarize provider evidence without turning missing usage into charges."""
-    model_events = [event for event in trace if event.get("type") == "model"]
-    request_events = [
-        event for event in model_events if event.get("status") != "budget_stopped"
-    ]
-    billing_records = [
-        usage.get("billing") for usage in usage_records
-        if isinstance(usage, dict) and isinstance(usage.get("billing"), dict)
-    ]
-    if not billing_records:
-        unavailable = {"status": "unavailable", "amount": None, "currency": "USD"}
-        return {"reported": dict(unavailable), "estimated": dict(unavailable)}
-
-    known_estimates = []
-    known_reports = []
-    for billing in billing_records:
-        estimate = billing.get("estimated_cost", {})
-        if (isinstance(estimate, dict) and estimate.get("status") == "estimated"
-                and isinstance(estimate.get("amount"), (int, float))):
-            known_estimates.append(float(estimate["amount"]))
-        report = billing.get("reported_cost", {})
-        if (isinstance(report, dict) and report.get("status") == "reported"
-                and isinstance(report.get("amount"), (int, float))):
-            known_reports.append(float(report["amount"]))
-
-    missing = max(0, len(request_events) - len(known_estimates))
-    if known_estimates:
-        estimated = {
-            "status": "partial" if missing else "estimated",
-            "amount": round(sum(known_estimates), 12),
-            "currency": "USD",
-            "missing_usage_calls": missing,
-            "request_count": len(request_events),
-        }
-    else:
-        estimated = {
-            "status": "unavailable", "amount": None, "currency": "USD",
-            "missing_usage_calls": len(request_events),
-            "request_count": len(request_events),
-        }
-
-    missing_reports = max(0, len(request_events) - len(known_reports))
-    if known_reports:
-        reported = {
-            "status": "partial" if missing_reports else "reported",
-            "amount": round(sum(known_reports), 12),
-            "currency": "USD",
-            "missing_charge_calls": missing_reports,
-            "request_count": len(request_events),
-        }
-    else:
-        reported = {
-            "status": "unavailable", "amount": None, "currency": "USD",
-            "missing_charge_calls": len(request_events),
-            "request_count": len(request_events),
-        }
-    return {"reported": reported, "estimated": estimated}
+    tally = _CostTally()
+    tally.consume(usage_records, trace)
+    return tally.summary()
 
 
 def _observed_models(usage_records: list[dict[str, Any]]) -> list[str]:
@@ -272,29 +319,43 @@ def _observed_models(usage_records: list[dict[str, Any]]) -> list[str]:
     return models
 
 
-def _selected_point_state(
-    messages: list[dict[str, Any]], model_call_count: int, *, budgets: Any,
-    usage_records: list[dict[str, Any]], trace: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Budget, context and accounting facts known from history so far (observer copy only)."""
-    usage_totals: dict[str, float] = {}
-    for usage in usage_records:
-        for key, value in usage.items():
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                usage_totals[key] = usage_totals.get(key, 0) + value
-    cost = _cost_summary(usage_records, trace)
-    return {
-        "model_calls": model_call_count,
-        "max_model_calls": budgets.max_model_calls,
-        "context_bytes": _context_size_bytes(messages),
-        "max_context_bytes": budgets.max_context_bytes,
-        "tool_result_messages": sum(1 for message in messages if message.get("role") == "tool"),
-        "tool_output_limit_bytes": budgets.tool_output_limit_bytes,
-        "attempt_deadline_seconds": budgets.attempt_deadline_seconds,
-        "usage_totals": usage_totals,
-        "estimated_cost": cost["estimated"],
-        "reported_cost": cost["reported"],
-    }
+class _SelectedPointTally:
+    """Budget, context and accounting facts known from history so far (observer copy only).
+
+    Messages, usage and trace only grow, so each snapshot reads just the items added since the last one.
+    The values equal a rescan of the whole history: the context size is the byte length of the JSON list.
+    """
+
+    def __init__(self) -> None:
+        self._costs = _CostTally()
+        self._messages_seen = 0
+        self._tool_result_messages = 0
+        self._message_bytes = 0
+
+    def state(self, messages: list[dict[str, Any]], model_call_count: int, *, budgets: Any,
+              usage_records: list[dict[str, Any]], trace: list[dict[str, Any]]) -> dict[str, Any]:
+        for message in messages[self._messages_seen:]:
+            self._tool_result_messages += 1 if message.get("role") == "tool" else 0
+            self._message_bytes += len(json.dumps(
+                message, ensure_ascii=False, separators=(",", ":"), default=_json_default,
+            ).encode("utf-8"))
+        self._messages_seen = len(messages)
+        self._costs.consume(usage_records, trace)
+        cost = self._costs.summary()
+        # "[" and "]" plus one comma between each pair of messages.
+        context_bytes = 2 + self._message_bytes + max(0, self._messages_seen - 1)
+        return {
+            "model_calls": model_call_count,
+            "max_model_calls": budgets.max_model_calls,
+            "context_bytes": context_bytes,
+            "max_context_bytes": budgets.max_context_bytes,
+            "tool_result_messages": self._tool_result_messages,
+            "tool_output_limit_bytes": budgets.tool_output_limit_bytes,
+            "attempt_deadline_seconds": budgets.attempt_deadline_seconds,
+            "usage_totals": dict(self._costs.usage_totals),
+            "estimated_cost": cost["estimated"],
+            "reported_cost": cost["reported"],
+        }
 
 
 def _evaluate_candidate_changes(
@@ -399,6 +460,7 @@ def attempt_and_evaluate(
     model_call_count = 0
     usage_records = []
     harness_error: str | None = None
+    evaluation_category: str | None = None
 
     try:
         image_evidence = build_task_environment(
@@ -456,14 +518,17 @@ def attempt_and_evaluate(
                 messages=messages,
             )
             sink.emit(
-                "initial_context", {"message_count": len(messages), "tool_definitions": TOOL_DEFINITIONS},
+                "initial_context", {"status": "ready", "message_count": len(messages),
+                                    "tool_definitions": TOOL_DEFINITIONS},
                 {"messages.json": json_artifact(messages)},
             )
+
+            tally = _SelectedPointTally()
 
             def snapshot_state(
                 current_messages: list[dict[str, Any]], current_count: int
             ) -> dict[str, Any]:
-                return _selected_point_state(
+                return tally.state(
                     current_messages, current_count, budgets=budgets,
                     usage_records=usage_records, trace=trace,
                 )
@@ -544,8 +609,8 @@ def attempt_and_evaluate(
                     else "derived_from_model_call_budget"
                 )
                 if termination == "graph_step_budget":
-                    _record(
-                        trace, "termination", reason=termination,
+                    _record_final(
+                        trace, sink, "termination", reason=termination,
                         graph_steps=graph_state["graph_step_count"],
                         max_graph_steps=graph_step_limit,
                         model_calls=model_call_count,
@@ -616,17 +681,16 @@ def attempt_and_evaluate(
                     "patch": "",
                     "collection_error": str(exc),
                 }
-                _record(
-                    trace, "patch_collection", status="unavailable",
+                _record_final(
+                    trace, sink, "patch_collection", status="unavailable",
                     error_category="invalid_patch", error=str(exc),
                 )
                 result["evaluation"] = {
                     "status": "invalid_patch", "checks": {}, "error": str(exc)
                 }
             else:
-                _record(
-                    trace,
-                    "patch_collection",
+                _record_final(
+                    trace, sink, "patch_collection",
                     status="completed",
                     changed_files=result["candidate"]["changed_files"],
                     change_count=len(changes),
@@ -640,9 +704,9 @@ def attempt_and_evaluate(
                     admitted_task=admitted_task,
                     timeout_seconds=budgets.evaluation_timeout_seconds,
                 )
-                _finalize_evaluation(result, evaluation, trace)
+                evaluation_category = _finalize_evaluation(result, evaluation, trace, sink)
             elif result["candidate"].get("status") == "unavailable":
-                _finalize_evaluation(result, result["evaluation"], trace)
+                evaluation_category = _finalize_evaluation(result, result["evaluation"], trace, sink)
     except KeyboardInterrupt as exc:
         result["termination_reason"] = "interrupted"
         result["functional_verdict"] = "invalid_environment"
@@ -651,8 +715,8 @@ def attempt_and_evaluate(
             "status": "error", "checks": {},
             "error": "Attempt interrupted before evaluation completed.",
         }
-        _record(
-            trace, "interruption", status="interrupted",
+        _record_final(
+            trace, sink, "interruption", status="interrupted",
             error=f"{type(exc).__name__}: {exc}",
         )
     except EventRecordingError as exc:
@@ -664,18 +728,18 @@ def attempt_and_evaluate(
         result["failure_category"] = "recording_failure"
         result["functional_verdict"] = "invalid_environment"
         result["evaluation"] = {"status": "error", "checks": {}, "error": harness_error}
-        _record(trace, "harness_error", status="error", error=harness_error)
+        _record_final(trace, sink, "harness_error", status="error", error=harness_error)
     except Exception as exc:
         harness_error = f"{type(exc).__name__}: {exc}"
         result["harness_error"] = harness_error
         if time.monotonic() >= work_deadline:
             result["termination_reason"] = "attempt_deadline"
             result["failure_category"] = "environment_setup_deadline"
-            _record(trace, "termination", reason="attempt_deadline", error=harness_error)
+            _record_final(trace, sink, "termination", reason="attempt_deadline", error=harness_error)
         else:
             result["termination_reason"] = "harness_error"
             result["failure_category"] = "harness_environment_failure"
-            _record(trace, "harness_error", status="error", error=harness_error)
+            _record_final(trace, sink, "harness_error", status="error", error=harness_error)
         result["functional_verdict"] = "invalid_environment"
         result["evaluation"] = {"status": "error", "checks": {}, "error": harness_error}
     finally:
@@ -690,7 +754,7 @@ def attempt_and_evaluate(
             except Exception as exc:
                 cleanup_error = f"{type(exc).__name__}: {exc}"
                 result.setdefault("cleanup_error", cleanup_error)
-                _record(trace, "cleanup_error", status="error", error=cleanup_error)
+                _record_final(trace, sink, "cleanup_error", status="error", error=cleanup_error)
         _finalize_accounting(result, model, model_call_count, usage_records, trace)
         if repository_capture is not None:
             result["metadata"]["repository_capture"] = repository_capture.summary()
@@ -707,8 +771,8 @@ def attempt_and_evaluate(
             try:
                 result["candidate"] = collect_candidate(task_repository, defect_baseline)
                 changes = result["candidate"]["files"]
-                _record(
-                    trace, "patch_collection", status="completed_during_cleanup",
+                _record_final(
+                    trace, sink, "patch_collection", status="completed_during_cleanup",
                     changed_files=result["candidate"]["changed_files"],
                     change_count=len(changes),
                 )
@@ -724,16 +788,16 @@ def attempt_and_evaluate(
                             admitted_task=admitted_task,
                             timeout_seconds=budgets.evaluation_timeout_seconds,
                         )
-                    _finalize_evaluation(result, evaluation, trace)
+                    evaluation_category = _finalize_evaluation(result, evaluation, trace, sink)
             except EnvironmentFailure as exc:
                 evaluation = {"status": "invalid_patch", "checks": {}, "error": str(exc)}
                 result["candidate"] = {
                     "status": "unavailable", "changed_files": [], "files": [],
                     "patch": "", "collection_error": str(exc),
                 }
-                _record(trace, "patch_collection", status="unavailable",
-                        error_category="invalid_patch", error=str(exc))
-                _finalize_evaluation(result, evaluation, trace)
+                _record_final(trace, sink, "patch_collection", status="unavailable",
+                              error_category="invalid_patch", error=str(exc))
+                evaluation_category = _finalize_evaluation(result, evaluation, trace, sink)
         result["duration_seconds"] = round(time.monotonic() - started, 6)
         result["metadata"]["duration_seconds"] = result["duration_seconds"]
         result["metadata"]["finished_at"] = _timestamp()
@@ -743,7 +807,12 @@ def attempt_and_evaluate(
                     "termination_reason": result["termination_reason"],
                     "functional_verdict": result["functional_verdict"],
                     "failure_category": result.get("failure_category"),
+                    "duration_seconds": result["duration_seconds"],
+                    "candidate_status": result["candidate"].get("status"),
                     "changed_files": result["candidate"].get("changed_files", []),
+                    "evaluation_status": result["evaluation"].get("status"),
+                    "evaluation_failure_category": evaluation_category,
+                    "evaluation_error": result["evaluation"].get("error"),
                     "checks": result["evaluation"].get("checks", {}),
                 },
                 {"candidate.patch": result["candidate"].get("patch", "").encode("utf-8")},
@@ -751,5 +820,5 @@ def attempt_and_evaluate(
         except EventRecordingError as exc:
             # The result is still returned; an earlier failure keeps its own message.
             result.setdefault("recording", {"status": "failed", "error": str(exc)})
-        _collect_artifacts(result, artifact_directory)
+        _collect_artifacts(result, artifact_directory, observed=event_sink is not None)
     return result
