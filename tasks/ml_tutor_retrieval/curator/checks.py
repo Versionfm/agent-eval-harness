@@ -173,14 +173,13 @@ def evaluate_observations(
     if payload.get("worker_status") != "completed":
         return _failed_candidate_result("Candidate worker did not return observations.")
     if payload.get("python_version") != expected_python_version:
-        return {
-            "status": "error",
-            "checks": {},
-            "error": (
-                f"Evaluator worker used Python {payload.get('python_version')!r}; "
-                f"expected {expected_python_version!r}."
-            ),
-        }
+        result = _failed_candidate_result(
+            f"Candidate worker reported Python {payload.get('python_version')!r}; "
+            f"expected {expected_python_version!r}."
+        )
+        result["candidate_worker_python_version"] = payload.get("python_version")
+        result["expected_python_version"] = expected_python_version
+        return result
 
     observations = payload.get("observations")
     if not isinstance(observations, Mapping) or set(observations) != set(CHECK_IDS):

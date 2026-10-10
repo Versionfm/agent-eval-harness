@@ -8,18 +8,42 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_eval_harness.attempt import _evaluate_candidate_changes
+from agent_eval_harness.attempt import _evaluate_candidate_changes, _finalize_evaluation
 from agent_eval_harness.environment import (
     CommandTimeout,
     EnvironmentFailure,
     run_canonical_checks,
 )
+from tasks.ml_tutor_retrieval.curator.checks import CHECK_IDS, evaluate_observations
 
 
 TASK_PACKAGE = Path(__file__).resolve().parents[1] / "tasks" / "ml_tutor_retrieval"
 
 
 class EvaluatorFailureClassificationTests(unittest.TestCase):
+    def test_candidate_reported_worker_runtime_mismatch_is_a_repair_failure(self):
+        evaluation = evaluate_observations(
+            {
+                "worker_status": "completed",
+                "python_version": "0.0-candidate-reported",
+                "observations": {},
+            },
+            expected_python_version="3.12.13",
+        )
+        result = {"trace": []}
+
+        _finalize_evaluation(result, evaluation, result["trace"])
+
+        self.assertEqual(evaluation["status"], "completed")
+        self.assertEqual(set(evaluation["checks"]), set(CHECK_IDS))
+        self.assertTrue(all(value is False for value in evaluation["checks"].values()))
+        self.assertEqual(
+            evaluation["candidate_worker_python_version"], "0.0-candidate-reported"
+        )
+        self.assertEqual(evaluation["expected_python_version"], "3.12.13")
+        self.assertEqual(result["functional_verdict"], "failure")
+        self.assertEqual(result["failure_category"], "candidate_execution_error")
+
     def test_worker_start_timeout_is_an_environment_error(self):
         with patch(
             "agent_eval_harness.environment.DockerTaskContainer.start",
