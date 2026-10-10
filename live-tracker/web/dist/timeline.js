@@ -1,25 +1,43 @@
-// Workbench entry point (layout A): component map, chronological timeline and inspector.
-// The saved history plus SSE feed one attempt (connection.ts owns delivery). Evidence is written with textContent only.
+// Workbench entry point (layout A): component map, chronological timeline, inspector, final results and playback.
+// Two modes, always labelled. Saved recordings load once and are played back with the controls; a live
+// attempt is followed over the stream, and the selection follows the newest event only until the reader moves
+// away. connection.ts owns live delivery. Evidence is written with textContent only.
 import { buildComponentMap, updateComponentCounts } from "./components.js";
 import { follow } from "./connection.js";
 import { el } from "./dom.js";
+import { renderFinal } from "./final.js";
 import { Inspector } from "./inspector.js";
 import { COMPONENTS, OPERATION_STARTS, componentOf } from "./model.js";
+import { Playback } from "./playback.js";
 const timeline = document.getElementById("timeline");
 const status = document.getElementById("status");
 const detail = document.getElementById("detail");
 const lag = document.getElementById("lag");
 const components = document.getElementById("components");
+const modeLine = document.getElementById("mode");
+const reportLink = document.getElementById("report-link");
+const finalPanel = document.getElementById("final");
+const controls = {
+    play: document.getElementById("play"),
+    previous: document.getElementById("previous"),
+    next: document.getElementById("next"),
+    speed: document.getElementById("speed"),
+    scrub: document.getElementById("scrub"),
+    position: document.getElementById("position"),
+    follow: document.getElementById("follow"),
+};
 const banner = el("p", "note");
 banner.id = "recording";
 banner.setAttribute("role", "status");
 banner.hidden = true;
 status.after(banner);
 let inspector;
+let playback;
+let mode = "live";
 const events = [];
 const rows = new Map();
 let lastSequence = 0;
-let selectedSequence = null;
+let selectedIndex = -1;
 let activeComponent = null;
 let recording = null;
 // Recording completeness is shown apart from the verdict and termination reason.
@@ -34,6 +52,10 @@ function describeRecording(next) {
             return `Recording is incomplete: the final record was cut off (${next.torn_tail_bytes} bytes not verified).`;
         case "open":
             return "The attempt has not recorded its finish: it is still running, or it stopped without a final record.";
+        case "complete":
+            return `Recording complete: ${next.verified_events} events verified.`;
+        case "legacy":
+            return "Legacy first-live-pair trace, read only. Attempt starts and finishes, operation starts, Python phases, graph nodes, selected-point state and intermediate captures were not recorded, so none are shown. Fields marked derived were computed now from the saved bytes.";
         default:
             return "";
     }
@@ -44,6 +66,7 @@ function applyRecording(next) {
     banner.textContent = text;
     banner.hidden = text === "";
     markRows();
+    setMode();
 }
 function describe(event) {
     const data = event.data;
@@ -94,6 +117,15 @@ function buildRow(event) {
     row.append(button);
     return row;
 }
+// Appends a recorded event without selecting it. Callers decide what the reader sees.
+function appendRow(event) {
+    events.push(event);
+    lastSequence = event.sequence;
+    const row = buildRow(event);
+    rows.set(event.sequence, row);
+    timeline.append(row);
+    updateComponentCounts(components, events);
+}
 // Only accepted events reach the timeline: duplicates are dropped by the ledger, gaps and conflicts are explicit rows.
 function onAccepted(event, accepted) {
     if (accepted.kind === "duplicate") {
@@ -107,17 +139,13 @@ function onAccepted(event, accepted) {
         timeline.append(el("li", "gap", `missing events ${accepted.gap[0]} to ${accepted.gap[1]}`));
     }
     // Keep the inspector on the newest event only while the reader has not chosen another one.
-    const trackingLatest = selectedSequence === null || selectedSequence === lastSequence;
-    lastSequence = event.sequence;
-    events.push(event);
-    const row = buildRow(event);
-    rows.set(event.sequence, row);
-    timeline.append(row);
-    updateComponentCounts(components, events);
+    const trackingLatest = selectedIndex === -1 || selectedIndex === events.length - 1;
+    appendRow(event);
     if (trackingLatest) {
-        selectEvent(event.sequence);
+        selectIndex(events.length - 1);
     }
     else {
+        syncPlayback();
         markRows();
     }
 }
@@ -133,6 +161,7 @@ function markRows() {
     // A recording that stopped without an outcome can no longer deliver one: its starts are unresolved.
     const stopped = events.some((event) => event.type === "attempt_finished")
         || ["failed", "corrupt", "interrupted"].includes(recording?.state ?? "");
+    const selectedSequence = events[selectedIndex]?.sequence ?? null;
     const closed = new Set(events.filter((event) => event.operation_id && !OPERATION_STARTS.has(event.type))
         .map((event) => event.operation_id));
     for (const event of events) {
@@ -152,14 +181,37 @@ function markRows() {
         row.querySelector(".operation-status").textContent = label;
     }
 }
-function selectEvent(sequence) {
-    selectedSequence = sequence;
+function syncPlayback() {
+    playback.sync(events.length, selectedIndex, events[selectedIndex]?.sequence);
+}
+// The mode line says which mode is on and whether live following is active; it never implies either.
+function setMode() {
+    modeLine.dataset.mode = mode;
+    if (mode === "saved") {
+        modeLine.textContent = recording?.state === "legacy"
+            ? "Playback of the preserved legacy trace (read only). No model, tool or provider call is made."
+            : "Playback of a saved recording. Only recorded events are shown; no model, tool or provider call is made.";
+        return;
+    }
+    const following = events.length === 0 || selectedIndex === events.length - 1;
+    modeLine.textContent = following
+        ? "Live: following the newest recorded event."
+        : `Live: not following. Showing #${events[selectedIndex]?.sequence ?? "?"}; Follow latest resumes.`;
+}
+function selectIndex(index) {
+    const event = events[index];
+    if (!event) {
+        return;
+    }
+    selectedIndex = index;
     activeComponent = null;
     markRows();
-    const event = events.find((item) => item.sequence === sequence);
-    if (event) {
-        void inspector.showEvent(events, event);
-    }
+    syncPlayback();
+    setMode();
+    void inspector.showEvent(events, event);
+}
+function selectEvent(sequence) {
+    selectIndex(events.findIndex((item) => item.sequence === sequence));
 }
 function selectComponent(id) {
     const component = COMPONENTS.find((item) => item.id === id);
@@ -171,16 +223,49 @@ function selectComponent(id) {
     const count = events.filter((event) => componentOf(event) === id).length;
     void inspector.showComponent(component, count);
 }
+// Saved recordings are read once. Every recorded event is shown; the selection starts on the last one.
+async function loadSaved(attemptId) {
+    mode = "saved";
+    const response = await fetch(`/api/attempts/${encodeURIComponent(attemptId)}/events?after=0`);
+    const body = (await response.json());
+    applyRecording(body.recording);
+    for (const event of body.events) {
+        appendRow(event);
+    }
+    // The same status vocabulary as the live stream: a stopped recording is a recording error, not "saved".
+    const stopped = body.recording.state === "failed" || body.recording.state === "corrupt";
+    status.textContent = stopped ? "recording-error" : "saved";
+    status.dataset.state = status.textContent;
+    lag.textContent = "";
+    detail.textContent = `${body.events.length} recorded events`;
+    if (events.length > 0) {
+        selectIndex(events.length - 1);
+    }
+}
 async function start() {
     const attempts = (await (await fetch("/api/attempts")).json());
     if (attempts.length === 0) {
         status.textContent = "no attempts registered";
         return;
     }
-    const attemptId = attempts[0].attempt_id;
+    const requested = new URLSearchParams(window.location.search).get("attempt");
+    const chosen = attempts.find((item) => item.attempt_id === requested) ?? attempts[0];
+    const attemptId = chosen.attempt_id;
     inspector = new Inspector(attemptId, document.getElementById("inspector"), document.getElementById("state"), document.getElementById("evidence"));
+    playback = new Playback(controls, selectIndex);
     buildComponentMap(components, selectComponent);
-    follow(attemptId, { onAccepted, onProgress, onRecording: applyRecording });
+    reportLink.href = `/api/attempts/${encodeURIComponent(attemptId)}/report`;
+    reportLink.hidden = false;
+    void renderFinal(finalPanel, attemptId);
+    if (chosen.mode === "saved") {
+        await loadSaved(attemptId);
+    }
+    else {
+        mode = "live";
+        follow(attemptId, { onAccepted, onProgress, onRecording: applyRecording });
+    }
+    setMode();
+    syncPlayback();
 }
 start().catch((error) => {
     status.textContent = `failed to load timeline: ${String(error)}`;
