@@ -63,6 +63,7 @@ class AttemptBudgets:
     provider_retry_delay_seconds: float = 0
     cleanup_timeout_seconds: float = 5
     evaluation_timeout_seconds: float = 90
+    max_graph_steps: int | None = None
 
     def __post_init__(self) -> None:
         if self.max_model_calls < 1:
@@ -83,6 +84,8 @@ class AttemptBudgets:
             raise ValueError("cleanup_timeout_seconds must be positive")
         if self.evaluation_timeout_seconds <= 0:
             raise ValueError("evaluation_timeout_seconds must be positive")
+        if self.max_graph_steps is not None and self.max_graph_steps < 1:
+            raise ValueError("max_graph_steps must be positive")
 
 
 class ModelCallDeadlineExceeded(TimeoutError):
@@ -478,9 +481,8 @@ def _cost_summary(usage_records: list[dict[str, Any]], trace: list[dict[str, Any
 
     missing = max(0, len(request_events) - len(known_estimates))
     if known_estimates:
-        estimated_status = "partial" if missing else "estimated"
         estimated = {
-            "status": estimated_status,
+            "status": "partial" if missing else "estimated",
             "amount": round(sum(known_estimates), 12),
             "currency": "USD",
             "missing_usage_calls": missing,
@@ -514,10 +516,262 @@ def _cost_summary(usage_records: list[dict[str, Any]], trace: list[dict[str, Any
 def _observed_models(usage_records: list[dict[str, Any]]) -> list[str]:
     models = []
     for usage in usage_records:
-        model = usage.get("observed_model") if isinstance(usage, dict) else None
-        if isinstance(model, str) and model and model not in models:
-            models.append(model)
+        model_name = usage.get("observed_model") if isinstance(usage, dict) else None
+        if isinstance(model_name, str) and model_name and model_name not in models:
+            models.append(model_name)
     return models
+
+
+def _request_model_turn(
+    *,
+    messages: list[dict[str, Any]],
+    model: ModelAdapter,
+    model_config: ModelConfig,
+    budgets: AttemptBudgets,
+    work_deadline: float,
+    trace: list[dict[str, Any]],
+    result: dict[str, Any],
+    usage_records: list[dict[str, Any]],
+    model_call_count: int,
+) -> tuple[ModelResponse | None, int, str | None]:
+    """Run one shared model node, including deadline, context, and retry policy."""
+    if time.monotonic() >= work_deadline:
+        termination = "attempt_deadline"
+        _record(
+            trace, "termination", reason=termination,
+            attempt_deadline_seconds=budgets.attempt_deadline_seconds,
+        )
+        return None, model_call_count, termination
+    if model_call_count >= budgets.max_model_calls:
+        termination = "model_call_budget"
+        _record(trace, "termination", reason=termination, model_calls=model_call_count)
+        return None, model_call_count, termination
+
+    context_bytes = _context_size_bytes(messages)
+    result["metadata"]["context_bytes_at_last_check"] = context_bytes
+    if context_bytes > budgets.max_context_bytes:
+        termination = "context_budget"
+        result["metadata"]["context_bytes_at_stop"] = context_bytes
+        _record(
+            trace, "termination", reason=termination,
+            context_bytes=context_bytes, max_context_bytes=budgets.max_context_bytes,
+        )
+        return None, model_call_count, termination
+
+    request_retry_count = 0
+    response: ModelResponse | None = None
+    request: ModelRequest | None = None
+    call_started = time.monotonic()
+    termination: str | None = None
+    while response is None and termination is None:
+        if time.monotonic() >= work_deadline:
+            termination = "attempt_deadline"
+            _record(trace, "termination", reason=termination, model_calls=model_call_count)
+            break
+        if model_call_count >= budgets.max_model_calls:
+            termination = "model_call_budget"
+            _record(trace, "termination", reason=termination, model_calls=model_call_count)
+            break
+        request = ModelRequest(
+            messages=copy.deepcopy(messages),
+            config=model_config,
+            timeout_seconds=work_deadline - time.monotonic(),
+        )
+        model_call_count += 1
+        call_started = time.monotonic()
+        try:
+            response = _complete_with_deadline(model, request, work_deadline - call_started)
+            if not isinstance(response, ModelResponse):
+                raise TypeError("model adapter must return ModelResponse")
+        except RequestBudgetExceeded as exc:
+            duration = time.monotonic() - call_started
+            snapshotter = getattr(model, "accounting_snapshot", None)
+            try:
+                budget_snapshot = snapshotter() if callable(snapshotter) else None
+            except Exception as snapshot_error:
+                budget_snapshot = {
+                    "status": "unavailable",
+                    "error": f"{type(snapshot_error).__name__}: {snapshot_error}",
+                }
+            _record(
+                trace, "model", model_call=model_call_count, status="budget_stopped",
+                duration_seconds=round(duration, 6), request_messages=request.messages,
+                error=f"{type(exc).__name__}: {exc}", error_category="spending_budget",
+                retrying=False, spend_budget=budget_snapshot,
+            )
+            termination = "spending_budget"
+            _record(trace, "termination", reason=termination, model_calls=model_call_count)
+        except ModelCallDeadlineExceeded as exc:
+            duration = time.monotonic() - call_started
+            _record(
+                trace, "model", model_call=model_call_count, status="timeout",
+                duration_seconds=round(duration, 6), request_messages=request.messages,
+                error=f"{type(exc).__name__}: {exc}", error_category="attempt_deadline",
+            )
+            termination = "attempt_deadline"
+        except KeyboardInterrupt as exc:
+            duration = time.monotonic() - call_started
+            _record(
+                trace, "model", model_call=model_call_count, status="interrupted",
+                duration_seconds=round(duration, 6), request_messages=request.messages,
+                error=f"{type(exc).__name__}: {exc}", error_category="interrupted",
+            )
+            termination = "interrupted"
+        except RetryableProviderError as exc:
+            duration = time.monotonic() - call_started
+            can_retry = (
+                request_retry_count < budgets.max_provider_retries
+                and model_call_count < budgets.max_model_calls
+                and time.monotonic() < work_deadline
+            )
+            delay = min(
+                budgets.provider_retry_delay_seconds,
+                max(0.0, work_deadline - time.monotonic()),
+            ) if can_retry else 0.0
+            _record(
+                trace, "model", model_call=model_call_count, status="error",
+                duration_seconds=round(duration, 6), request_messages=request.messages,
+                error=f"{type(exc).__name__}: {exc}",
+                error_category="retryable_provider_error", retrying=can_retry,
+                retry_number=request_retry_count + 1, retry_delay_seconds=delay,
+            )
+            if not can_retry:
+                termination = (
+                    "model_call_budget"
+                    if model_call_count >= budgets.max_model_calls else "provider_error"
+                )
+                _record(trace, "termination", reason=termination, model_calls=model_call_count)
+                break
+            request_retry_count += 1
+            result["metadata"]["retry_count"] = result["metadata"].get("retry_count", 0) + 1
+            if delay:
+                time.sleep(delay)
+            if time.monotonic() >= work_deadline:
+                termination = "attempt_deadline"
+                _record(trace, "termination", reason=termination, model_calls=model_call_count)
+        except Exception as exc:
+            duration = time.monotonic() - call_started
+            _record(
+                trace, "model", model_call=model_call_count, status="error",
+                duration_seconds=round(duration, 6), request_messages=request.messages,
+                error=f"{type(exc).__name__}: {exc}", error_category="provider_error",
+                retrying=False,
+            )
+            termination = "provider_error"
+            _record(trace, "termination", reason=termination, model_calls=model_call_count)
+
+    if response is None:
+        return None, model_call_count, termination or "provider_error"
+
+    duration = time.monotonic() - call_started
+    usage = _json_copy(dict(response.usage))
+    usage["observed_model"] = response.observed_model
+    usage_records.append(usage)
+    response_payload = {
+        "content": response.content,
+        "reasoning_fields": _json_copy(dict(response.reasoning_fields)),
+        "tool_calls": [
+            {
+                "name": call.name,
+                "arguments": _json_copy(dict(call.arguments)),
+                "call_id": call.call_id,
+            }
+            for call in response.tool_calls
+        ],
+        "usage": usage,
+        "observed_model": response.observed_model,
+    }
+    _record(
+        trace, "model", model_call=model_call_count, status="ok",
+        duration_seconds=round(duration, 6), request_messages=request.messages,
+        response=response_payload,
+    )
+    messages.append(_assistant_message(response))
+    if usage.get("provider_finish_reason") == "length":
+        termination = "provider_output_limit"
+        _record(
+            trace, "termination", reason=termination,
+            error_category="provider_output_limit", provider_finish_reason="length",
+            model_calls=model_call_count,
+        )
+        return response, model_call_count, termination
+    if not response.tool_calls:
+        termination = "agent_completed"
+        _record(trace, "termination", reason=termination, model_calls=model_call_count)
+    return response, model_call_count, termination
+
+
+def _execute_tool_turn(
+    *,
+    response: ModelResponse,
+    messages: list[dict[str, Any]],
+    model_call_count: int,
+    container: DockerTaskContainer,
+    budgets: AttemptBudgets,
+    work_deadline: float,
+    trace: list[dict[str, Any]],
+) -> str | None:
+    """Run one ordered tool node and append its bounded outputs to conversation state."""
+    for index, call in enumerate(response.tool_calls, 1):
+        tool_started = time.monotonic()
+        tool_id = call.call_id or f"call-{model_call_count}-{index}"
+        tool_remaining = work_deadline - tool_started
+        default_timeout = float(budgets.shell_timeout_seconds) if call.name == "run_shell" else 30.0
+        if tool_remaining <= 0:
+            tool_result = {
+                "status": "error", "output": "",
+                "error": "Attempt deadline reached before tool execution",
+                "exit_code": None, "error_category": "attempt_deadline", "retryable": False,
+            }
+        else:
+            effective_timeout = min(default_timeout, tool_remaining)
+            try:
+                tool_result = _classify_tool_result(
+                    call.name,
+                    _dispatch_tool(container, call, budgets, effective_timeout),
+                )
+            except Exception as exc:
+                tool_result = {
+                    "status": "error", "output": "",
+                    "error": f"{type(exc).__name__}: {exc}", "exit_code": None,
+                    "error_category": "tool_failed", "retryable": False,
+                }
+            if (
+                time.monotonic() >= work_deadline
+                and tool_result.get("status") == "error"
+                and tool_result.get("error_category") == "command_timeout"
+            ):
+                tool_result["error_category"] = "attempt_deadline"
+                tool_result["error"] = "Attempt deadline expired during tool execution"
+        deadline_hit = time.monotonic() >= work_deadline
+        duration = time.monotonic() - tool_started
+        tool_result["duration_seconds"] = round(duration, 6)
+        visible_output, truncated = _tool_output_for_model(
+            str(tool_result.get("output", "")), budgets.tool_output_limit_bytes
+        )
+        visible = {
+            "status": tool_result.get("status"),
+            "output": visible_output,
+            "error": tool_result.get("error"),
+            "error_category": tool_result.get("error_category"),
+            "retryable": tool_result.get("retryable", False),
+            "truncated": truncated,
+        }
+        _record(
+            trace, "tool", tool_name=call.name, tool_call_id=tool_id,
+            arguments=_json_copy(dict(call.arguments)), status=tool_result.get("status"),
+            duration_seconds=round(duration, 6), result=tool_result,
+            model_visible_result=visible,
+        )
+        messages.append({
+            "role": "tool", "tool_call_id": tool_id, "name": call.name,
+            "content": json.dumps(visible, ensure_ascii=False, sort_keys=True),
+        })
+        if deadline_hit:
+            termination = "attempt_deadline"
+            _record(trace, "termination", reason=termination, model_calls=model_call_count)
+            return termination
+    return None
 
 
 def attempt_and_evaluate(
@@ -538,8 +792,8 @@ def attempt_and_evaluate(
     artifact_directory.parent.mkdir(parents=True, exist_ok=True)
     if admitted_task.source_repository == artifact_directory or admitted_task.source_repository in artifact_directory.parents:
         raise ValueError("attempt artifacts must be outside the pinned source repository")
-    if orchestrator != "python-loop":
-        raise ValueError("ticket #3 provides the python-loop orchestrator")
+    if orchestrator not in {"python-loop", "langgraph"}:
+        raise ValueError("orchestrator must be 'python-loop' or 'langgraph'")
 
     task_repository = artifact_directory / "task-repository"
     trace: list[dict[str, Any]] = []
@@ -634,287 +888,111 @@ def attempt_and_evaluate(
             )
 
             termination = "harness_error"
-            while True:
-                if time.monotonic() >= work_deadline:
-                    termination = "attempt_deadline"
-                    _record(
-                        trace, "termination", reason=termination,
-                        attempt_deadline_seconds=budgets.attempt_deadline_seconds,
-                    )
-                    break
-                if model_call_count >= budgets.max_model_calls:
-                    termination = "model_call_budget"
-                    _record(trace, "termination", reason=termination, model_calls=model_call_count)
-                    break
-                context_bytes = _context_size_bytes(messages)
-                result["metadata"]["context_bytes_at_last_check"] = context_bytes
-                if context_bytes > budgets.max_context_bytes:
-                    termination = "context_budget"
-                    result["metadata"]["context_bytes_at_stop"] = context_bytes
-                    _record(
-                        trace, "termination", reason=termination,
-                        context_bytes=context_bytes, max_context_bytes=budgets.max_context_bytes,
-                    )
-                    break
-                request_retry_count = 0
-                response: ModelResponse | None = None
-                while response is None:
-                    if time.monotonic() >= work_deadline:
-                        termination = "attempt_deadline"
-                        _record(trace, "termination", reason=termination, model_calls=model_call_count)
-                        break
-                    if model_call_count >= budgets.max_model_calls:
-                        termination = "model_call_budget"
-                        _record(trace, "termination", reason=termination, model_calls=model_call_count)
-                        break
-                    request = ModelRequest(
-                        messages=copy.deepcopy(messages),
-                        config=model_config,
-                        timeout_seconds=work_deadline - time.monotonic(),
-                    )
-                    model_call_count += 1
-                    call_started = time.monotonic()
-                    try:
-                        response = _complete_with_deadline(
-                            model, request, work_deadline - call_started
-                        )
-                        if not isinstance(response, ModelResponse):
-                            raise TypeError("model adapter must return ModelResponse")
-                    except RequestBudgetExceeded as exc:
-                        duration = time.monotonic() - call_started
-                        snapshotter = getattr(model, "accounting_snapshot", None)
-                        budget_snapshot = snapshotter() if callable(snapshotter) else None
-                        _record(
-                            trace,
-                            "model",
-                            model_call=model_call_count,
-                            status="budget_stopped",
-                            duration_seconds=round(duration, 6),
-                            request_messages=request.messages,
-                            error=f"{type(exc).__name__}: {exc}",
-                            error_category="spending_budget",
-                            retrying=False,
-                            spend_budget=budget_snapshot,
-                        )
-                        termination = "spending_budget"
-                        _record(
-                            trace, "termination", reason=termination,
-                            model_calls=model_call_count,
-                        )
-                        break
-                    except ModelCallDeadlineExceeded as exc:
-                        duration = time.monotonic() - call_started
-                        _record(
-                            trace,
-                            "model",
-                            model_call=model_call_count,
-                            status="timeout",
-                            duration_seconds=round(duration, 6),
-                            request_messages=request.messages,
-                            error=f"{type(exc).__name__}: {exc}",
-                            error_category="attempt_deadline",
-                        )
-                        termination = "attempt_deadline"
-                        _record(trace, "termination", reason=termination, model_calls=model_call_count)
-                        break
-                    except KeyboardInterrupt as exc:
-                        duration = time.monotonic() - call_started
-                        _record(
-                            trace,
-                            "model",
-                            model_call=model_call_count,
-                            status="interrupted",
-                            duration_seconds=round(duration, 6),
-                            request_messages=request.messages,
-                            error=f"{type(exc).__name__}: {exc}",
-                            error_category="interrupted",
-                        )
-                        termination = "interrupted"
-                        _record(trace, "termination", reason=termination, model_calls=model_call_count)
-                        break
-                    except RetryableProviderError as exc:
-                        duration = time.monotonic() - call_started
-                        can_retry = (
-                            request_retry_count < budgets.max_provider_retries
-                            and model_call_count < budgets.max_model_calls
-                            and time.monotonic() < work_deadline
-                        )
-                        delay = min(
-                            budgets.provider_retry_delay_seconds,
-                            max(0.0, work_deadline - time.monotonic()),
-                        ) if can_retry else 0.0
-                        _record(
-                            trace,
-                            "model",
-                            model_call=model_call_count,
-                            status="error",
-                            duration_seconds=round(duration, 6),
-                            request_messages=request.messages,
-                            error=f"{type(exc).__name__}: {exc}",
-                            error_category="retryable_provider_error",
-                            retrying=can_retry,
-                            retry_number=request_retry_count + 1,
-                            retry_delay_seconds=delay,
-                        )
-                        if not can_retry:
-                            termination = (
-                                "model_call_budget"
-                                if model_call_count >= budgets.max_model_calls
-                                else "provider_error"
-                            )
-                            _record(
-                                trace, "termination", reason=termination,
-                                model_calls=model_call_count,
-                            )
-                            break
-                        request_retry_count += 1
-                        result["metadata"]["retry_count"] = (
-                            result["metadata"].get("retry_count", 0) + 1
-                        )
-                        if delay:
-                            time.sleep(delay)
-                        if time.monotonic() >= work_deadline:
-                            termination = "attempt_deadline"
-                            _record(
-                                trace, "termination", reason=termination,
-                                model_calls=model_call_count,
-                            )
-                            break
-                    except Exception as exc:
-                        duration = time.monotonic() - call_started
-                        _record(
-                            trace,
-                            "model",
-                            model_call=model_call_count,
-                            status="error",
-                            duration_seconds=round(duration, 6),
-                            request_messages=request.messages,
-                            error=f"{type(exc).__name__}: {exc}",
-                            error_category="provider_error",
-                            retrying=False,
-                        )
-                        termination = "provider_error"
-                        _record(trace, "termination", reason=termination, model_calls=model_call_count)
-                        break
-                if response is None:
-                    break
-                duration = time.monotonic() - call_started
-                usage = _json_copy(dict(response.usage))
-                usage["observed_model"] = response.observed_model
-                usage_records.append(usage)
-                response_payload = {
-                    "content": response.content,
-                    "reasoning_fields": _json_copy(dict(response.reasoning_fields)),
-                    "tool_calls": [
-                        {"name": call.name, "arguments": _json_copy(dict(call.arguments)), "call_id": call.call_id}
-                        for call in response.tool_calls
-                    ],
-                    "usage": usage,
-                    "observed_model": response.observed_model,
-                }
-                _record(
-                    trace,
-                    "model",
-                    model_call=model_call_count,
-                    status="ok",
-                    duration_seconds=round(duration, 6),
-                    request_messages=request.messages,
-                    response=response_payload,
+            if orchestrator == "langgraph":
+                from agent_eval_harness.langgraph_attempt import run_attempt_graph
+
+                graph_step_limit = (
+                    budgets.max_graph_steps
+                    if budgets.max_graph_steps is not None
+                    else 2 * budgets.max_model_calls + 1
                 )
-                messages.append(_assistant_message(response))
-                if usage.get("provider_finish_reason") == "length":
-                    termination = "provider_output_limit"
+
+                def graph_model_step(state: dict[str, Any]) -> dict[str, Any]:
+                    graph_messages = list(state["messages"])
+                    previous_count = len(graph_messages)
+                    response, calls, stop_reason = _request_model_turn(
+                        messages=graph_messages,
+                        model=model,
+                        model_config=model_config,
+                        budgets=budgets,
+                        work_deadline=work_deadline,
+                        trace=trace,
+                        result=result,
+                        usage_records=usage_records,
+                        model_call_count=state["model_call_count"],
+                    )
+                    return {
+                        "messages": graph_messages[previous_count:],
+                        "model_response": response,
+                        "model_call_count": calls,
+                        "termination_reason": stop_reason,
+                    }
+
+                def graph_tool_step(state: dict[str, Any]) -> dict[str, Any]:
+                    graph_messages = list(state["messages"])
+                    previous_count = len(graph_messages)
+                    response = state["model_response"]
+                    if response is None:
+                        raise RuntimeError("tool node requires a model response")
+                    stop_reason = _execute_tool_turn(
+                        response=response,
+                        messages=graph_messages,
+                        model_call_count=state["model_call_count"],
+                        container=attempt_container,
+                        budgets=budgets,
+                        work_deadline=work_deadline,
+                        trace=trace,
+                    )
+                    return {
+                        "messages": graph_messages[previous_count:],
+                        "model_response": response,
+                        "model_call_count": state["model_call_count"],
+                        "termination_reason": stop_reason,
+                    }
+
+                graph_state = run_attempt_graph(
+                    initial_messages=messages,
+                    model_step=graph_model_step,
+                    tool_step=graph_tool_step,
+                    max_graph_steps=graph_step_limit,
+                )
+                messages = graph_state["messages"]
+                model_call_count = graph_state["model_call_count"]
+                termination = graph_state["termination_reason"] or "graph_step_budget"
+                result["metadata"]["graph_step_count"] = graph_state["graph_step_count"]
+                result["metadata"]["graph_step_limit"] = graph_step_limit
+                result["metadata"]["graph_step_limit_source"] = (
+                    "configured_graph_only_budget"
+                    if budgets.max_graph_steps is not None
+                    else "derived_from_model_call_budget"
+                )
+                if termination == "graph_step_budget":
                     _record(
-                        trace,
-                        "termination",
-                        reason=termination,
-                        error_category="provider_output_limit",
-                        provider_finish_reason="length",
+                        trace, "termination", reason=termination,
+                        graph_steps=graph_state["graph_step_count"],
+                        max_graph_steps=graph_step_limit,
                         model_calls=model_call_count,
                     )
-                    break
-                if not response.tool_calls:
-                    termination = "agent_completed"
-                    _record(trace, "termination", reason=termination, model_calls=model_call_count)
-                    break
-                for index, call in enumerate(response.tool_calls, 1):
-                    tool_started = time.monotonic()
-                    tool_id = call.call_id or f"call-{model_call_count}-{index}"
-                    tool_remaining = work_deadline - tool_started
-                    default_timeout = (
-                        float(budgets.shell_timeout_seconds)
-                        if call.name == "run_shell" else 30.0
+            else:
+                while termination == "harness_error":
+                    response, model_call_count, stop_reason = _request_model_turn(
+                        messages=messages,
+                        model=model,
+                        model_config=model_config,
+                        budgets=budgets,
+                        work_deadline=work_deadline,
+                        trace=trace,
+                        result=result,
+                        usage_records=usage_records,
+                        model_call_count=model_call_count,
                     )
-                    if tool_remaining <= 0:
-                        tool_result = {
-                            "status": "error", "output": "",
-                            "error": "Attempt deadline reached before tool execution",
-                            "exit_code": None, "error_category": "attempt_deadline",
-                            "retryable": False,
-                        }
-                    else:
-                        effective_timeout = min(default_timeout, tool_remaining)
-                        try:
-                            tool_result = _classify_tool_result(
-                                call.name,
-                                _dispatch_tool(
-                                    attempt_container, call, budgets, effective_timeout
-                                ),
-                            )
-                        except Exception as exc:
-                            tool_result = {
-                                "status": "error", "output": "",
-                                "error": f"{type(exc).__name__}: {exc}", "exit_code": None,
-                                "error_category": "tool_failed", "retryable": False,
-                            }
-                        if (
-                            time.monotonic() >= work_deadline
-                            and tool_result.get("status") == "error"
-                            and tool_result.get("error_category") == "command_timeout"
-                        ):
-                            tool_result["error_category"] = "attempt_deadline"
-                            tool_result["error"] = "Attempt deadline expired during tool execution"
-                    deadline_hit = time.monotonic() >= work_deadline
-                    duration = time.monotonic() - tool_started
-                    tool_result["duration_seconds"] = round(duration, 6)
-                    visible_output, truncated = _tool_output_for_model(
-                        str(tool_result.get("output", "")), budgets.tool_output_limit_bytes
-                    )
-                    visible = {
-                        "status": tool_result.get("status"),
-                        "output": visible_output,
-                        "error": tool_result.get("error"),
-                        "error_category": tool_result.get("error_category"),
-                        "retryable": tool_result.get("retryable", False),
-                        "truncated": truncated,
-                    }
-                    _record(
-                        trace,
-                        "tool",
-                        tool_name=call.name,
-                        tool_call_id=tool_id,
-                        arguments=_json_copy(dict(call.arguments)),
-                        status=tool_result.get("status"),
-                        duration_seconds=round(duration, 6),
-                        result=tool_result,
-                        model_visible_result=visible,
-                    )
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_id,
-                        "name": call.name,
-                        "content": json.dumps(visible, ensure_ascii=False, sort_keys=True),
-                    })
-                    if deadline_hit:
-                        termination = "attempt_deadline"
-                        _record(
-                            trace, "termination", reason=termination,
-                            model_calls=model_call_count,
-                        )
+                    if stop_reason is not None:
+                        termination = stop_reason
                         break
-
-                if termination == "attempt_deadline":
-                    break
+                    if response is None:
+                        termination = "provider_error"
+                        break
+                    stop_reason = _execute_tool_turn(
+                        response=response,
+                        messages=messages,
+                        model_call_count=model_call_count,
+                        container=attempt_container,
+                        budgets=budgets,
+                        work_deadline=work_deadline,
+                        trace=trace,
+                    )
+                    if stop_reason is not None:
+                        termination = stop_reason
 
             result["termination_reason"] = termination
             result["metadata"]["model_call_count"] = model_call_count
@@ -1063,6 +1141,18 @@ def attempt_and_evaluate(
         result["metadata"]["model_call_count"] = model_call_count
         result["metadata"]["retry_count"] = result["metadata"].get("retry_count", 0)
         result["metadata"].setdefault("usage_by_call", usage_records)
+        result["metadata"]["observed_models"] = _observed_models(usage_records)
+        result["metadata"]["cost"] = _cost_summary(usage_records, trace)
+        snapshotter = getattr(model, "accounting_snapshot", None)
+        if callable(snapshotter):
+            try:
+                result["metadata"]["spend_budget"] = snapshotter()
+            except Exception as exc:
+                result["metadata"]["spend_budget"] = {
+                    "status": "unavailable",
+                    "error_category": "accounting_snapshot_error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
         result["metadata"].setdefault(
             "attempt_duration_seconds", round(time.monotonic() - started, 6)
         )

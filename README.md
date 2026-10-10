@@ -89,4 +89,44 @@ python3 -m agent_eval_harness.run_failure_recovery \
 
 The expected outcome is `termination_reason: model_call_budget` with `functional_verdict: success`, the added file in `candidate.patch`, and all canonical checks passing. Open `report.html`, then inspect the failed and recovered tool events in `trace.jsonl`, the truncation marker in the model-visible result, and its full output file under `tool-results/`. The budgets in this command are demonstration proposals that can be changed with `--max-model-calls` and `--tool-output-limit-bytes`; neither the scripted run nor these values represent live-model calibration.
 
+## Compare the Python loop and LangGraph
+
+LangGraph is pinned with its complete resolved Python dependency set in
+`requirements-langgraph.txt`. Install it in a repository-local environment:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-langgraph.txt
+```
+
+Run the deterministic comparison with the locally admitted task evidence and
+the same pinned ML Tutor checkout. This uses scripted responses and makes no
+hosted model request; it does require Docker for the task and evaluator
+containers.
+
+```bash
+.venv/bin/python -m agent_eval_harness.run_langgraph_parity \
+  --admission-evidence /path/to/issue-2/admission.json \
+  --source-repository /path/to/prompt-engineering-group-project \
+  --output-dir /path/to/langgraph-parity
+```
+
+The command runs correct-repair, tool-error/recovery with a shared model-call
+budget stop, and a deliberately smaller graph-node budget. It writes separate
+attempt directories for `python-loop` and `langgraph`, including each
+`report.html`, `trace.jsonl`, and candidate patch, plus `comparison.json` with
+the machine-checked parity results. Read `comparison.json` first, then inspect
+the paired reports and traces. Graph node steps are counted separately from
+model requests. By default the graph limit is derived as
+`2 * max_model_calls + 1` (a model node and tool node per call, plus the final
+node that observes the common request limit); an optional
+`max_graph_steps` budget is recorded as a graph-only demonstration limit.
+The compiled graph's recursion limit is set above that effective node limit so
+LangGraph's default recursion guard cannot stop a parity run early.
+
+The mapping and framework boundary are documented in
+[the design](docs/DESIGN.md). This initial graph uses explicit state, model and
+tool nodes, a message reducer, conditional routing, and START/END. It adds no
+checkpoint persistence or automatic context compaction.
+
 See the [design interview](docs/design-interview.md), [published specification](docs/SPEC.md), [implementation design](docs/DESIGN.md), [learning sequence](docs/LEARNING_PLAN.md), and [ticket breakdown](docs/TICKETS.md) for the broader project.
