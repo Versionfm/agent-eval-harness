@@ -13,6 +13,7 @@ from agent_eval_harness.attempt import (
     DEFAULT_ADMISSION_EVIDENCE,
     DEFAULT_SOURCE_REPOSITORY,
     DEFAULT_TASK_PACKAGE,
+    ORCHESTRATION_ROOT,
     REPOSITORY_ROOT,
     attempt_and_evaluate,
 )
@@ -20,7 +21,7 @@ from agent_eval_harness.model import ModelConfig, ModelResponse, ScriptedModel, 
 
 
 DEFAULT_OUTPUT = (
-    REPOSITORY_ROOT.parents[1] / "orchestration" / "evidence" / "issue-4" / "tool-recovery"
+    ORCHESTRATION_ROOT / "evidence" / "issue-4" / "tool-recovery"
 )
 
 

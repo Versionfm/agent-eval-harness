@@ -108,7 +108,13 @@ class DeepSeekAdapterTests(unittest.TestCase):
             response.usage["billing"]["pricing"]["source_url"],
             "https://api-docs.deepseek.com/quick_start/pricing/",
         )
+        self.assertEqual(adapter.run_metadata()["execution_mode"], "controlled_transport")
         self.assertLessEqual(sent["body"]["max_tokens"], 8192)
+
+    def test_default_transport_is_labeled_as_live_https_without_making_a_request(self):
+        adapter = DeepSeekModelAdapter(api_key="fixture-secret")
+
+        self.assertEqual(adapter.run_metadata()["execution_mode"], "live_https")
 
     def test_complete_refuses_a_request_whose_worst_case_reservation_exceeds_the_cap(self):
         transport = FixtureTransport([HttpResponse(200, "{}")])

@@ -21,12 +21,13 @@ from agent_eval_harness.admission import (
     CHECK_IDS, VARIANT_NAMES, assess_admission, task_package_evidence,
 )
 from agent_eval_harness.environment import _force_remove_container, run_canonical_checks
+from agent_eval_harness.paths import orchestration_root
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 TASK_ROOT = REPOSITORY_ROOT / "tasks" / "ml_tutor_retrieval"
 MANIFEST_PATH = TASK_ROOT / "manifest.json"
-DEFAULT_OUTPUT = REPOSITORY_ROOT.parents[1] / "orchestration" / "evidence" / "issue-2"
+DEFAULT_OUTPUT = orchestration_root(REPOSITORY_ROOT) / "evidence" / "issue-2"
 VARIANT_PATHS = ("app/__init__.py", "app/source.py", "app/tutor.py")
 TMPFS_CONFIGURATION = "/tmp:rw,noexec,nosuid,mode=1777,size=16m"
 CONTAINER_CONFIGURATION = {

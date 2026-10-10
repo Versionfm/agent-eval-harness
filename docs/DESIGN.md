@@ -1,6 +1,6 @@
 # Coding-agent harness and evaluation design
 
-Status: active implementation design. Tickets #2–#4 admitted the ML Tutor task, ran the explicit loop, and preserved partial attempts; ticket #6 adds a deterministic LangGraph parity experiment on 2026-10-10. The matched live-provider comparison remains a separate checkpoint. Interview decisions are recorded in [design-interview.md](design-interview.md).
+Status: active implementation design. Tickets #2–#4 admitted the ML Tutor task, ran the explicit loop, and preserved partial attempts; ticket #6 adds a deterministic LangGraph parity experiment, and ticket #8 adds a bounded matched-run coordinator. The live provider measurement and evidence-based review remain pending. Interview decisions are recorded in [design-interview.md](design-interview.md).
 
 ## Purpose and first milestone
 
@@ -54,6 +54,8 @@ Both implementations will use identical tasks, prompts, adapter, tools, context 
 Use explicit nodes first rather than a prebuilt agent factory. Demonstrate checkpoint persistence and resume later, after orchestration parity, so their effects can be measured separately. Local traces are retained in both implementations; LangGraph checkpoints are a distinct concept from trace recording and model prompt caching.
 
 LangGraph is pinned at `1.2.14` in `requirements-langgraph.txt`; the complete resolved dependency set is pinned there for repeatable installation. The runnable comparison is `python -m agent_eval_harness.run_langgraph_parity`; it writes paired attempt artifacts and `comparison.json` outside the repository. References checked on 2026-10-10: [Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api), [Persistence](https://docs.langchain.com/oss/python/langgraph/persistence), and [LangGraph on PyPI](https://pypi.org/project/langgraph/).
+
+The matched live coordinator is `python -m agent_eval_harness.run_matched_comparison`. It requires admitted-task evidence and a passing scripted parity artifact for the same task and source revision. A bounded provider smoke must complete before attempts start. Both orchestrators use the same `ModelConfig`, `AttemptBudgets`, context construction, shared spend ledger, and task/evaluator boundaries; each `attempt_and_evaluate` call prepares a fresh defective baseline. Provider and environment failures invalidate the measurement and are not assigned an agent repair verdict. See [MATCHED_RUN.md](MATCHED_RUN.md) for the exact command, artifacts, and learning review.
 
 ## Initial model and context
 

@@ -43,13 +43,15 @@ from agent_eval_harness.model import (
     ScriptedModel,
     ToolCall,
 )
+from agent_eval_harness.paths import orchestration_root
 from agent_eval_harness.report import render_attempt_report
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+ORCHESTRATION_ROOT = orchestration_root(REPOSITORY_ROOT)
 DEFAULT_TASK_PACKAGE = REPOSITORY_ROOT / "tasks" / "ml_tutor_retrieval"
 DEFAULT_ADMISSION_EVIDENCE = (
-    REPOSITORY_ROOT.parents[1] / "orchestration" / "evidence" / "issue-2" / "admission.json"
+    ORCHESTRATION_ROOT / "evidence" / "issue-2" / "admission.json"
 )
 DEFAULT_SOURCE_REPOSITORY = Path("/home/francisco/prompt-engineering-group-project")
 
@@ -581,6 +583,43 @@ def _finalize_evaluation(
     )
 
 
+def _evaluate_candidate_changes(
+    defect_repository: Path,
+    changes: list[dict[str, Any]],
+    *,
+    image_id: str,
+    admitted_task: AdmittedTask,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Apply a collected candidate, then run the canonical evaluator.
+
+    Unsafe candidate paths are candidate failures. Failures while staging the
+    evaluator or running its Docker worker are environment errors, so an
+    unavailable canonical result cannot be scored as a repair failure.
+    """
+    try:
+        with tempfile.TemporaryDirectory(prefix="agent-eval-candidate-evaluator-") as scratch:
+            evaluation_repository = Path(scratch) / "task-repository"
+            shutil.copytree(defect_repository, evaluation_repository)
+            try:
+                _apply_candidate_changes(evaluation_repository, changes)
+            except EnvironmentFailure as exc:
+                return {"status": "invalid_patch", "checks": {}, "error": str(exc)}
+            return run_canonical_checks(
+                image_id,
+                evaluation_repository,
+                admitted_task.evaluator_directory,
+                admitted_task.runtime_version,
+                timeout_seconds=timeout_seconds,
+            )
+    except Exception as exc:
+        return {
+            "status": "error",
+            "checks": {},
+            "error": f"Candidate evaluator staging or execution failed: {type(exc).__name__}: {exc}",
+        }
+
+
 def _record(trace: list[dict[str, Any]], event_type: str, **data: Any) -> dict[str, Any]:
     event = {"event_id": len(trace) + 1, "type": event_type, "timestamp": _timestamp(), **data}
     trace.append(event)
@@ -1015,6 +1054,14 @@ def attempt_and_evaluate(
 
             messages = _initial_context(admitted_task, task_repository)
             result["initial_context"] = copy.deepcopy(messages)
+            result["metadata"]["initial_context_sha256"] = hashlib.sha256(
+                json.dumps(
+                    messages,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
             _record(
                 trace,
                 "initial_context",
@@ -1179,22 +1226,13 @@ def attempt_and_evaluate(
                 )
 
             if result["candidate"]["status"] == "collected":
-                try:
-                    with tempfile.TemporaryDirectory(prefix="agent-eval-fresh-evaluator-") as evaluator_scratch:
-                        evaluation_repository = Path(evaluator_scratch) / "task-repository"
-                        shutil.copytree(defect_repository, evaluation_repository)
-                        _apply_candidate_changes(evaluation_repository, changes)
-                        evaluation = run_canonical_checks(
-                            image_evidence["image_id"],
-                            evaluation_repository,
-                            admitted_task.evaluator_directory,
-                            admitted_task.runtime_version,
-                            timeout_seconds=budgets.evaluation_timeout_seconds,
-                        )
-                except EnvironmentFailure as exc:
-                    evaluation = {
-                        "status": "invalid_patch", "checks": {}, "error": str(exc)
-                    }
+                evaluation = _evaluate_candidate_changes(
+                    defect_repository,
+                    changes,
+                    image_id=image_evidence["image_id"],
+                    admitted_task=admitted_task,
+                    timeout_seconds=budgets.evaluation_timeout_seconds,
+                )
                 _finalize_evaluation(result, evaluation, trace)
             elif result["candidate"].get("status") == "unavailable":
                 _finalize_evaluation(result, result["evaluation"], trace)
@@ -1265,31 +1303,24 @@ def attempt_and_evaluate(
                 if image_evidence:
                     with tempfile.TemporaryDirectory(prefix="agent-eval-recovered-evaluator-") as scratch:
                         defective = Path(scratch) / "defect-repository"
-                        evaluation_repository = Path(scratch) / "evaluation-repository"
                         _materialize_snapshot(defective, defect_baseline)
-                        shutil.copytree(defective, evaluation_repository)
-                        _apply_candidate_changes(evaluation_repository, changes)
-                        evaluation = run_canonical_checks(
-                            image_evidence["image_id"], evaluation_repository,
-                            admitted_task.evaluator_directory,
-                            admitted_task.runtime_version,
+                        evaluation = _evaluate_candidate_changes(
+                            defective,
+                            changes,
+                            image_id=image_evidence["image_id"],
+                            admitted_task=admitted_task,
                             timeout_seconds=budgets.evaluation_timeout_seconds,
                         )
                     _finalize_evaluation(result, evaluation, trace)
             except EnvironmentFailure as exc:
+                evaluation = {"status": "invalid_patch", "checks": {}, "error": str(exc)}
                 result["candidate"] = {
                     "status": "unavailable", "changed_files": [], "files": [],
                     "patch": "", "collection_error": str(exc),
                 }
-                result["evaluation"] = {
-                    "status": "invalid_patch", "checks": {}, "error": str(exc)
-                }
-                result["functional_verdict"] = "failure"
-                result["failure_category"] = "invalid_patch"
-                _record(
-                    trace, "patch_collection", status="unavailable",
-                    error_category="invalid_patch", error=str(exc),
-                )
+                _record(trace, "patch_collection", status="unavailable",
+                        error_category="invalid_patch", error=str(exc))
+                _finalize_evaluation(result, evaluation, trace)
         result["duration_seconds"] = round(time.monotonic() - started, 6)
         result["metadata"]["duration_seconds"] = result["duration_seconds"]
         result["metadata"]["finished_at"] = _timestamp()

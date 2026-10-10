@@ -28,6 +28,7 @@ _COMPARISON_FIELDS = (
     ("Model settings", ("model_settings",)),
     ("Orchestrator dependency versions", ("dependency_versions",)),
     ("Harness revision", ("harness_revision",)),
+    ("Initial effective context", ("initial_context_sha256",)),
     ("Attempt budgets", ("budgets",)),
     ("Pricing source", ("pricing_source_url", "pricing_source_checked_at")),
 )
@@ -617,6 +618,7 @@ def render_comparison_report(
     python_review: dict[str, Any] | None = None,
     langgraph_review: dict[str, Any] | None = None,
     report_directory: Path | None = None,
+    run_notice: str | None = None,
 ) -> str:
     """Render two recorded attempt objects with explicit configuration flags."""
     report_directory = (report_directory or Path.cwd()).expanduser().resolve()
@@ -696,6 +698,7 @@ def render_comparison_report(
 <body><main>
   <section class="intro"><h1>Python loop and LangGraph comparison</h1>
     <p>Task: <strong>{html.escape(str(task))}</strong>. Functional verdicts come from canonical checks. Termination describes why each attempt stopped.</p>
+    {f'<p class="run-notice">{html.escape(run_notice)}</p>' if run_notice else ''}
     <p>Compare token counts and latency separately from money: cache warmth and pricing periods can change estimated cost. Reported charges, estimates, and unavailable values stay separate.</p>
   </section>
   <section class="outcome-pair" aria-label="Attempt outcome summary">
@@ -725,6 +728,7 @@ def build_comparison_report(
     *,
     python_review_path: Path | None = None,
     langgraph_review_path: Path | None = None,
+    run_notice: str | None = None,
 ) -> Path:
     """Build a report from persisted files only; this function never runs an attempt."""
     python_attempt = _load_attempt(python_directory)
@@ -739,6 +743,7 @@ def build_comparison_report(
         python_review=python_review,
         langgraph_review=langgraph_review,
         report_directory=destination.parent,
+        run_notice=run_notice,
     )
     destination.write_text(rendered, encoding="utf-8")
     return destination

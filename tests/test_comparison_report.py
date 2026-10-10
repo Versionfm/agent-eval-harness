@@ -44,6 +44,7 @@ class RecordedComparisonReportTests(unittest.TestCase):
                     "working_tree": "dirty",
                     "working_tree_sha256": "sha256:shared-harness-tree",
                 },
+                "initial_context_sha256": "sha256:identical-initial-context",
                 "budgets": {"max_model_calls": 5},
                 "usage_by_call": [{
                     "prompt_tokens": 100,
@@ -212,6 +213,10 @@ class RecordedComparisonReportTests(unittest.TestCase):
             self.assertRegex(
                 rendered,
                 r"Harness revision</th><td><span class=\"status good\">match</span>",
+            )
+            self.assertRegex(
+                rendered,
+                r"Initial effective context</th><td><span class=\"status good\">match</span>",
             )
 
             # A common mutable tag and differing built image IDs do not establish recipe parity.
