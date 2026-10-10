@@ -246,22 +246,45 @@ def _request_model_turn(
     return response, model_call_count, termination
 
 
+# Source identities (module:function) the live tracker resolves to registered source excerpts.
+MODEL_PHASE_SOURCE = "agent_eval_harness.loop:_request_model_turn"
+TOOL_PHASE_SOURCE = "agent_eval_harness.tools:execute_tool_turn"
+
+
 def run_python_loop(
     messages: list[dict[str, Any]],
     *,
     request_model: Callable[[list[dict[str, Any]], int], tuple[ModelResponse | None, int, str | None]],
     execute_tools: Callable[[ModelResponse, list[dict[str, Any]], int], str | None],
+    event_sink: AttemptEventSink = NULL_EVENT_SINK,
+    snapshot: Callable[[list[dict[str, Any]], int], dict[str, Any]] | None = None,
 ) -> tuple[str, int]:
-    """Advance model and tool turns until a shared stop reason ends the attempt."""
+    """Advance model and tool turns until a shared stop reason ends the attempt.
+
+    With a sink, each phase transition is published before it runs. With a snapshot,
+    a `state` event follows each phase so selected-point state depends only on earlier events.
+    """
     termination = "harness_error"
     model_call_count = 0
+    loop_step = 0
     while termination == "harness_error":
+        loop_step += 1
+        event_sink.emit("phase.enter", {"phase": "model_request", "loop_step": loop_step,
+                                        "source": MODEL_PHASE_SOURCE})
         response, model_call_count, stop_reason = request_model(messages, model_call_count)
+        if snapshot is not None:
+            event_sink.emit("state", {**snapshot(messages, model_call_count),
+                                      "loop_step": loop_step, "after_phase": "model_request"})
         if stop_reason is not None:
             termination = stop_reason
             break
         if response is None:
             termination = "provider_error"
             break
+        event_sink.emit("phase.enter", {"phase": "tool_execution", "loop_step": loop_step,
+                                        "source": TOOL_PHASE_SOURCE})
         termination = execute_tools(response, messages, model_call_count) or "harness_error"
+        if snapshot is not None:
+            event_sink.emit("state", {**snapshot(messages, model_call_count),
+                                      "loop_step": loop_step, "after_phase": "tool_execution"})
     return termination, model_call_count
