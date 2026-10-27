@@ -1,0 +1,11 @@
+{
+  "name": "live-tracker-web",
+  "private": true,
+  "description": "Minimal timeline client for the live tracker; dist/ is committed",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3"
+  }
+}
