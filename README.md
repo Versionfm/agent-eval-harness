@@ -6,6 +6,17 @@ The task pins `Versionfm/prompt-engineering-group-project` at `6890d9eae6ebd2967
 
 The admission runner creates three disposable source copies, builds a digest-pinned Python 3.12.13 environment without network access, and probes each variant in a separate container. A probe worker has no network, one read-only task mount, and no curator evaluator, credentials, or container socket. It returns observations; the outer harness loads the curator checks and decides each result. The runner produces machine-readable evidence and a small HTML summary. Setup and evaluator errors are reported as `invalid_environment`; behavior mismatches are `rejected`.
 
+## Requirements
+
+- Python 3.12. The core package uses only the standard library.
+- LangGraph for the LangGraph orchestrator and its tests: `pip install -r requirements-langgraph.txt`.
+- Docker, with the digest-pinned base image from `tasks/ml_tutor_retrieval/environment/Dockerfile` cached locally, for admission, attempts and every `*_docker` test.
+- A local checkout of `Versionfm/prompt-engineering-group-project` at the pinned commit. That repository is private, so ask for access. Commands take `--source-repository`; otherwise the default is `ML_TUTOR_REPOSITORY`, then `../prompt-engineering-group-project` next to this repository.
+- A DeepSeek API key in a private text file, only for the live provider runs.
+- For the live-tracker browser tests: `pip install playwright` and a system Chrome. Node is needed only to rebuild `live-tracker/web/dist/`, which is committed.
+
+The fast offline tests need none of the optional pieces except LangGraph: `python3 -m unittest discover -s tests`.
+
 ## Layout
 
 The package has four layers. `harness/` is the agent: the numbered components and the model adapters. `bench/` runs the agent on a task and grades it. `reports/` renders saved evidence. `cli/` holds the runnable commands. The rule is in [AGENTS.md](AGENTS.md), and `python3 -m unittest tests.test_layout` checks it. The [component map](docs/COMPONENT_MAP.md) lists each file with its component number and status.
@@ -56,7 +67,7 @@ Run the complete Docker attempt tests by setting `AGENT_EVAL_DOCKER_INTEGRATION=
 
 ## Run the bounded DeepSeek attempt
 
-The direct adapter calls `https://api.deepseek.com/chat/completions` with `deepseek-flash`, thinking enabled at low effort, and at most 8,192 output tokens. It preserves `reasoning_content` in follow-up tool requests, normalizes tool calls and cache usage, and applies `ModelRequest.timeout_seconds` at the blocking HTTP transport. The credential file is read by the outer Python process; the task container receives no API key.
+The direct adapter calls `https://api.deepseek.com/chat/completions` with `deepseek-flash`, thinking enabled at low effort, and at most 20,000 output tokens. It preserves `reasoning_content` in follow-up tool requests, normalizes tool calls and cache usage, and applies `ModelRequest.timeout_seconds` at the blocking HTTP transport. The credential file is read by the outer Python process; the task container receives no API key.
 
 Run the combined smoke and repair command only after creating a private text file containing the API key. The smoke uses at most 512 output tokens and must complete one provider-selected `search_text` call plus a follow-up response before the repair starts. It does not force `tool_choice`, and it never edits a repository or executes a shell command. Both stages stop before sending any request whose conservative peak-rate reservation would exceed its local or shared USD ceiling:
 

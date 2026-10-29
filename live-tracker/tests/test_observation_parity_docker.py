@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agent_eval_harness.bench.attempt import DEFAULT_SOURCE_REPOSITORY
 from agent_eval_harness.reports.compare_report import _load_attempt
 from agent_eval_harness.harness.hooks import json_artifact
 from live_tracker.reader import read_attempt_history
@@ -14,9 +15,7 @@ from live_tracker.run_scripted import read_then_complete_model, run_attempt
 
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"
 ADMISSION_EVIDENCE = os.environ.get("ML_TUTOR_ADMISSION_EVIDENCE")
-SOURCE_REPOSITORY = Path(os.environ.get(
-    "ML_TUTOR_REPOSITORY", "/home/francisco/prompt-engineering-group-project"
-))
+SOURCE_REPOSITORY = DEFAULT_SOURCE_REPOSITORY
 
 
 @unittest.skipUnless(

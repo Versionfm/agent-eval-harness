@@ -27,6 +27,7 @@ from agent_eval_harness.bench.admission import task_package_evidence
 from agent_eval_harness.reports.compare_report import build_comparison_report
 from agent_eval_harness.harness.deepseek import (
     DEFAULT_BASE_URL,
+    MAX_OUTPUT_TOKENS,
     PRICING_SOURCE_CHECKED_AT,
     PRICING_SOURCE_URL,
     DeepSeekModelAdapter,
@@ -49,11 +50,11 @@ DEFAULT_OUTPUT = ORCHESTRATION_ROOT / "evidence" / "issue-8" / "matched-comparis
 DEFAULT_SHARED_BUDGET_USD = 1.00
 DEFAULT_SMOKE_BUDGET_USD = 0.10
 DEFAULT_ATTEMPT_BUDGET_USD = 0.30
-DEFAULT_MAX_MODEL_CALLS = 10
+DEFAULT_MAX_MODEL_CALLS = 30
 DEFAULT_MAX_CONTEXT_BYTES = 128 * 1024
 DEFAULT_ATTEMPT_DEADLINE_SECONDS = 600.0
 DEFAULT_SHELL_TIMEOUT_SECONDS = 60
-DEFAULT_MAX_OUTPUT_TOKENS = 2048
+DEFAULT_MAX_OUTPUT_TOKENS = 20000
 SMOKE_MAX_OUTPUT_TOKENS = 512
 REQUIRED_PARITY_SCENARIOS = {"correct", "error-recovery-budget", "graph-step-budget"}
 REQUIRED_PARITY_CHECKS = {
@@ -183,8 +184,8 @@ def _validate_budget_limits(
             raise ValueError(f"{label} must be finite and positive")
     if shared_budget_usd + 1e-12 < smoke_budget_usd + 2 * attempt_budget_usd:
         raise ValueError("shared budget must cover the smoke and both per-attempt ceilings")
-    if not 1 <= max_output_tokens <= 8192:
-        raise ValueError("max_output_tokens must be from 1 to 8192")
+    if not 1 <= max_output_tokens <= MAX_OUTPUT_TOKENS:
+        raise ValueError(f"max_output_tokens must be from 1 to {MAX_OUTPUT_TOKENS}")
     # Necessary condition for admission: one request reserving its full output limit must fit each stage.
     for label, stage_usd, output_tokens in (
         ("smoke", smoke_budget_usd, SMOKE_MAX_OUTPUT_TOKENS),

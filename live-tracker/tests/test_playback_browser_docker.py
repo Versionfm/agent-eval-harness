@@ -17,18 +17,17 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from agent_eval_harness.bench.attempt import DEFAULT_SOURCE_REPOSITORY
 from attempt_fixtures import build_docker_fixtures
 from live_tracker.playback import make_playback_server
 
 
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"
 ADMISSION_EVIDENCE = os.environ.get("ML_TUTOR_ADMISSION_EVIDENCE")
-SOURCE_REPOSITORY = Path(os.environ.get(
-    "ML_TUTOR_REPOSITORY", "/home/francisco/prompt-engineering-group-project"
-))
+SOURCE_REPOSITORY = DEFAULT_SOURCE_REPOSITORY
 LEGACY_ROOT = Path(os.environ.get(
     "LIVE_FIRST_EVIDENCE",
-    "/home/francisco/Documents/Codex/2026-10-10/d/outputs/evidence/live-first-2026-10-10",
+    str(Path(__file__).resolve().parents[3] / "evidence" / "live-first-2026-10-10"),
 ))
 # The viewer's presentation limit for retained output (inspector.ts EXCERPT_CHARS).
 EXCERPT_CHARS = 2000

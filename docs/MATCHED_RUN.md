@@ -13,19 +13,19 @@ The Python run saved a one-line title-tokenization repair. Its visible unit suit
 
 The total usage-based estimate including smoke was USD 0.01306953. Provider-confirmed charges were unavailable. The sequential LangGraph run received a warm prefix cache on its first call; the cost difference is not a controlled orchestration effect. Original artifacts remain unchanged, including the coordinator-time `pending_human_review` flag in `experiment.json`; a separate `acceptance-review.json` records the subsequent Codex review. Human PR review is a separate step.
 
-Local deliverables are at `/home/francisco/Documents/Codex/2026-10-10/d/outputs/evidence/live-first-2026-10-10/`: `report.html`, `review-summary.md`, `acceptance-review.json`, manifests, full traces/tool outputs, candidate patches, checks and exact-attempt review records. They remain outside Git because they include target-repository source excerpts. The original source checkout was not edited. Controlled provider-transport fixtures remain distinct from this live pair.
+Local deliverables are kept next to the repository at `../evidence/live-first-2026-10-10/`: `report.html`, `review-summary.md`, `acceptance-review.json`, manifests, full traces/tool outputs, candidate patches, checks and exact-attempt review records. They remain outside Git because they include target-repository source excerpts. The original source checkout was not edited. Controlled provider-transport fixtures remain distinct from this live pair.
 
 ## Reproduce the comparison
 
-Use the persistent Python environment that has the pinned LangGraph dependency set. The repository and evidence paths below are the current local paths. The private key is stored at the path shown below, outside the harness and task repositories. Fresh prerequisites are generated for the current harness revision; prior admission/parity files remain evidence of their original revision.
+Use the persistent Python environment that has the pinned LangGraph dependency set. Replace the `/path/to/...` placeholders with your own paths. Keep the API key file outside the harness and task repositories. Fresh prerequisites are generated for the current harness revision; prior admission/parity files remain evidence of their original revision.
 
 ```bash
-cd /home/francisco/Documents/Codex/2026-10-10/d/outputs/agent-eval-harness
+cd /path/to/agent-eval-harness
 
-PYTHON=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/runtime/bin/python
-SOURCE=/home/francisco/prompt-engineering-group-project
+PYTHON=/path/to/venv/bin/python
+SOURCE=/path/to/prompt-engineering-group-project
 RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
-EVIDENCE=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/reproduction-$RUN_TAG
+EVIDENCE=/path/to/evidence/reproduction-$RUN_TAG
 ADMISSION=$EVIDENCE/admission/admission.json
 PARITY=$EVIDENCE/parity/comparison.json
 OUTPUT=$EVIDENCE/matched
@@ -37,7 +37,7 @@ OUTPUT=$EVIDENCE/matched
   --output-dir "$EVIDENCE/parity"
 
 "$PYTHON" -m agent_eval_harness.cli.run_matched_comparison \
-  --credential-file /home/francisco/.config/agent-eval-harness/deepseek-api-key.txt \
+  --credential-file /path/to/deepseek-api-key.txt \
   --admission-evidence "$ADMISSION" \
   --parity-evidence "$PARITY" \
   --source-repository "$SOURCE" \
@@ -52,7 +52,7 @@ To regenerate the scripted prerequisite, select a new output directory because p
 "$PYTHON" -m agent_eval_harness.cli.run_langgraph_parity \
   --admission-evidence "$ADMISSION" \
   --source-repository "$SOURCE" \
-  --output-dir /home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/issue-6/reproduction
+  --output-dir /path/to/evidence/issue-6/reproduction
 ```
 
 Then set `PARITY` to that directory's `comparison.json` and run the matched command. Both deterministic prerequisites use Docker but make no hosted-model request. The matched command requires the live provider smoke to pass before it starts either coding-agent attempt.

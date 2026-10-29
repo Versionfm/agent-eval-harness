@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from agent_eval_harness.bench.attempt import DEFAULT_SOURCE_REPOSITORY
 from agent_eval_harness.harness import tools
 from agent_eval_harness.harness.permissions import DockerTaskContainer
 from live_tracker.reader import read_attempt_history
@@ -13,9 +14,7 @@ from live_tracker.run_scripted import read_then_complete_model, run_attempt
 
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"
 ADMISSION_EVIDENCE = os.environ.get("ML_TUTOR_ADMISSION_EVIDENCE")
-SOURCE_REPOSITORY = Path(os.environ.get(
-    "ML_TUTOR_REPOSITORY", "/home/francisco/prompt-engineering-group-project"
-))
+SOURCE_REPOSITORY = DEFAULT_SOURCE_REPOSITORY
 
 # (fault, scripted model requests that were sent, tool dispatches, expected unresolved, marker saved)
 CASES = {

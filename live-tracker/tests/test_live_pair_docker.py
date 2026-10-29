@@ -12,6 +12,7 @@ import unittest
 import urllib.request
 from pathlib import Path
 
+from agent_eval_harness.bench.attempt import DEFAULT_SOURCE_REPOSITORY
 from agent_eval_harness.cli import run_matched_comparison as coordinator
 from agent_eval_harness.reports.compare_report import _load_attempt
 from agent_eval_harness.harness.deepseek import HttpResponse
@@ -25,9 +26,7 @@ from live_tracker.server import make_server
 
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"
 ADMISSION_EVIDENCE = os.environ.get("ML_TUTOR_ADMISSION_EVIDENCE")
-SOURCE_REPOSITORY = Path(os.environ.get(
-    "ML_TUTOR_REPOSITORY", "/home/francisco/prompt-engineering-group-project"
-))
+SOURCE_REPOSITORY = DEFAULT_SOURCE_REPOSITORY
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ORCHESTRATORS = ("python-loop", "langgraph")
 CREDENTIAL_TEXT = "fixture-secret-never-persist"

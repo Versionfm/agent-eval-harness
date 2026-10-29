@@ -14,6 +14,7 @@ import unittest
 from dataclasses import replace
 
 from agent_eval_harness.bench.attempt import (
+    DEFAULT_SOURCE_REPOSITORY,
     AdmittedTask,
     AttemptBudgets,
     ModelConfig,
@@ -27,9 +28,7 @@ from agent_eval_harness.harness.model import RetryableProviderError
 
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"
 ADMISSION_EVIDENCE = os.environ.get("ML_TUTOR_ADMISSION_EVIDENCE")
-SOURCE_REPOSITORY = Path(os.environ.get(
-    "ML_TUTOR_REPOSITORY", "/home/francisco/prompt-engineering-group-project"
-))
+SOURCE_REPOSITORY = DEFAULT_SOURCE_REPOSITORY
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 

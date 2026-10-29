@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from agent_eval_harness.bench.attempt import (
+    DEFAULT_SOURCE_REPOSITORY,
     AdmittedTask,
     AttemptBudgets,
     ModelConfig,
@@ -16,9 +17,7 @@ from agent_eval_harness.harness.deepseek import DeepSeekModelAdapter, HttpRespon
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"
 ADMISSION_EVIDENCE = os.environ.get("ML_TUTOR_ADMISSION_EVIDENCE")
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-SOURCE_REPOSITORY = Path(os.environ.get(
-    "ML_TUTOR_REPOSITORY", "/home/francisco/prompt-engineering-group-project"
-))
+SOURCE_REPOSITORY = DEFAULT_SOURCE_REPOSITORY
 
 
 class FixtureTransport:

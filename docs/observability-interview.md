@@ -48,7 +48,7 @@ Confirmed: playback of saved observable evidence, without model calls, tool exec
 
 ## Mockup
 
-Artifact: `/home/francisco/Documents/Codex/2026-10-10/d/outputs/harness-viewer-prototype.html`.
+Artifact: `harness-viewer-prototype.html` (kept outside Git).
 
 Three structurally different layouts share the same saved first-live-pair evidence and are selected with `?variant=A`, `?variant=B` or `?variant=C`:
 

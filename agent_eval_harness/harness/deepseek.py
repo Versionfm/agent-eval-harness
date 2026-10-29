@@ -23,8 +23,8 @@ from agent_eval_harness.harness.model import (
 
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
-DEFAULT_MAX_OUTPUT_TOKENS = 8192
-MAX_OUTPUT_TOKENS = 8192
+DEFAULT_MAX_OUTPUT_TOKENS = 20000
+MAX_OUTPUT_TOKENS = 20000
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 TRANSIENT_HTTP_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
 PRICING_SOURCE_URL = "https://api-docs.deepseek.com/quick_start/pricing/"

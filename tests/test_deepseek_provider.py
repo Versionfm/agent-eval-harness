@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timezone
 import unittest
 
-from agent_eval_harness.harness.deepseek import DeepSeekModelAdapter, HttpResponse, SpendBudget
+from agent_eval_harness.harness.deepseek import MAX_OUTPUT_TOKENS, DeepSeekModelAdapter, HttpResponse, SpendBudget
 from agent_eval_harness.cli.deepseek_smoke import run_smoke
 from agent_eval_harness.harness.model import (
     ModelConfig,
@@ -109,7 +109,7 @@ class DeepSeekAdapterTests(unittest.TestCase):
             "https://api-docs.deepseek.com/quick_start/pricing/",
         )
         self.assertEqual(adapter.run_metadata()["execution_mode"], "controlled_transport")
-        self.assertLessEqual(sent["body"]["max_tokens"], 8192)
+        self.assertLessEqual(sent["body"]["max_tokens"], MAX_OUTPUT_TOKENS)
 
     def test_default_transport_is_labeled_as_live_https_without_making_a_request(self):
         adapter = DeepSeekModelAdapter(api_key="fixture-secret")

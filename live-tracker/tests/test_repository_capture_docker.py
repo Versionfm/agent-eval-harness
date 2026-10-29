@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agent_eval_harness.bench.attempt import DEFAULT_SOURCE_REPOSITORY
 from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder
 from live_tracker.run_scripted import background_model, mutations_model, run_attempt
@@ -18,9 +19,7 @@ from live_tracker.run_scripted import background_model, mutations_model, run_att
 
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"
 ADMISSION_EVIDENCE = os.environ.get("ML_TUTOR_ADMISSION_EVIDENCE")
-SOURCE_REPOSITORY = Path(os.environ.get(
-    "ML_TUTOR_REPOSITORY", "/home/francisco/prompt-engineering-group-project"
-))
+SOURCE_REPOSITORY = DEFAULT_SOURCE_REPOSITORY
 
 
 def _captures(events):

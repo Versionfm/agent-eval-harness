@@ -16,7 +16,7 @@ from live_tracker.server import make_server
 
 LEGACY_ROOT = Path(os.environ.get(
     "LIVE_FIRST_EVIDENCE",
-    "/home/francisco/Documents/Codex/2026-10-10/d/outputs/evidence/live-first-2026-10-10",
+    str(Path(__file__).resolve().parents[3] / "evidence" / "live-first-2026-10-10"),
 ))
 
 

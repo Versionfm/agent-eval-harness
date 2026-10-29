@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_eval_harness.bench.attempt import AdmittedTask, AttemptBudgets, attempt_and_evaluate
+from agent_eval_harness.bench.attempt import DEFAULT_SOURCE_REPOSITORY, AdmittedTask, AttemptBudgets, attempt_and_evaluate
 from agent_eval_harness.harness.model import ModelConfig, ModelResponse, RequestBudgetExceeded, ScriptedModel, ToolCall
 from live_tracker.reader import read_attempt_history
 from live_tracker.recorder import AttemptRecorder
@@ -18,9 +18,7 @@ from live_tracker.recorder import AttemptRecorder
 
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"
 ADMISSION_EVIDENCE = os.environ.get("ML_TUTOR_ADMISSION_EVIDENCE")
-SOURCE_REPOSITORY = Path(os.environ.get(
-    "ML_TUTOR_REPOSITORY", "/home/francisco/prompt-engineering-group-project"
-))
+SOURCE_REPOSITORY = DEFAULT_SOURCE_REPOSITORY
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ORCHESTRATORS = ("python-loop", "langgraph")
 

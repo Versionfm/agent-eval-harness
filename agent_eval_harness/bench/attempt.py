@@ -6,6 +6,7 @@ import copy
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -74,7 +75,9 @@ DEFAULT_TASK_PACKAGE = REPOSITORY_ROOT / "tasks" / "ml_tutor_retrieval"
 DEFAULT_ADMISSION_EVIDENCE = (
     ORCHESTRATION_ROOT / "evidence" / "issue-2" / "admission.json"
 )
-DEFAULT_SOURCE_REPOSITORY = Path("/home/francisco/prompt-engineering-group-project")
+DEFAULT_SOURCE_REPOSITORY = Path(os.environ.get(
+    "ML_TUTOR_REPOSITORY", REPOSITORY_ROOT.parent / "prompt-engineering-group-project"
+))
 
 
 @dataclass(frozen=True)
