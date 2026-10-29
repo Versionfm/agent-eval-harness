@@ -26,15 +26,30 @@ from agent_eval_harness.harness.permissions import (
 )
 
 
+BUILD_NETWORKS = ("none", "default")
+
+
+def task_build_network(environment: dict[str, Any]) -> str:
+    """The manifest's Docker build network: "none" (default) or "default" to let RUN steps install dependencies."""
+    network = environment.get("build_network", "none")
+    if network not in BUILD_NETWORKS:
+        raise EnvironmentFailure(f"Manifest build_network must be one of {BUILD_NETWORKS}; got {network!r}")
+    return network
+
+
 def build_task_environment(
     dockerfile: Path,
     context_directory: Path,
     *,
     expected_base_image: str,
     expected_python_version: str,
+    build_network: str = "none",
     deadline: float | None = None,
 ) -> dict[str, Any]:
-    """Build offline and resolve the resulting local tag to an immutable image ID."""
+    """Build the task image and resolve the resulting local tag to an immutable image ID.
+
+    Only the build may use the network; attempt and evaluator containers never do.
+    """
     dockerfile = dockerfile.resolve()
     context_directory = context_directory.resolve()
     dockerfile_bytes = dockerfile.read_bytes()
@@ -43,15 +58,15 @@ def build_task_environment(
         raise EnvironmentFailure("Task Dockerfile does not use the manifest's pinned base image")
     # Each worktree/run gets a stable reference that another local run cannot retag
     # while this attempt still needs its image for independent evaluation.
-    tag = f"agent-eval-harness/ml-tutor-attempt:{uuid.uuid4().hex}"
+    tag = f"agent-eval-harness/task-attempt:{uuid.uuid4().hex}"
     build = _run(
         [
-            "docker", "build", "--network=none", "--pull=false", "--tag", tag,
+            "docker", "build", f"--network={build_network}", "--pull=false", "--tag", tag,
             "--file", str(dockerfile), str(context_directory),
         ],
         timeout=_bounded_timeout(300, deadline),
     )
-    build_output = _require_success(build, "Offline task image build")
+    build_output = _require_success(build, "Task image build")
     image_id = _require_success(
         _run(["docker", "image", "inspect", "--format", "{{.Id}}", tag],
              timeout=_bounded_timeout(30, deadline)),
@@ -77,7 +92,7 @@ def build_task_environment(
         "runtime_version": runtime,
         "docker_server_version": server_version,
         "dockerfile_sha256": hashlib.sha256(dockerfile_bytes).hexdigest(),
-        "build_network": "none",
+        "build_network": build_network,
         "build_pull": False,
         "build_status": "passed",
         "build_output_excerpt": (build_output + "\n" + (build.stderr or ""))[-1200:],
@@ -104,6 +119,7 @@ def prepare_defective_repository(
     mutation_path: Path,
     destination: Path,
     *,
+    required_paths: tuple[str, ...],
     deadline: float | None = None,
 ) -> None:
     """Archive the pinned full repository and apply only the admitted mutation."""
@@ -141,8 +157,7 @@ def prepare_defective_repository(
         )
     target.write_text(source.replace(before, mutation["after"], 1), encoding="utf-8")
 
-    required = ("AGENTS.md", "app/source.py", "app/tutor.py", "tests/test_source.py")
-    missing = [name for name in required if not (destination / name).is_file()]
+    missing = [name for name in required_paths if not (destination / name).is_file()]
     if missing:
         raise EnvironmentFailure(f"Pinned repository is missing expected files: {missing!r}")
     if (destination / ".git").exists() or (destination / "curator").exists():

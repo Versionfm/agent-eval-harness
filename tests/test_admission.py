@@ -41,7 +41,7 @@ class AdmissionOutcomeTests(unittest.TestCase):
             "repair": variant(),
         }
 
-        outcome = assess_admission(runs)
+        outcome = assess_admission(runs, CHECK_IDS, TITLE_RELEVANCE_FAILURES)
 
         self.assertEqual(outcome["status"], "admitted")
         self.assertEqual(
@@ -57,7 +57,7 @@ class AdmissionOutcomeTests(unittest.TestCase):
         }
         runs["baseline"]["checks"]["body_relevance"] = None
 
-        outcome = assess_admission(runs)
+        outcome = assess_admission(runs, CHECK_IDS, TITLE_RELEVANCE_FAILURES)
 
         self.assertEqual(outcome["status"], "invalid_environment")
         self.assertEqual(outcome["invalid_runs"], ["baseline"])
@@ -69,7 +69,7 @@ class AdmissionOutcomeTests(unittest.TestCase):
             "repair": variant(),
         }
 
-        outcome = assess_admission(runs)
+        outcome = assess_admission(runs, CHECK_IDS, TITLE_RELEVANCE_FAILURES)
 
         self.assertEqual(outcome["status"], "rejected")
         self.assertIn("body_relevance", outcome["reasons"][0])
@@ -85,6 +85,7 @@ class AdmissionIdentityTests(unittest.TestCase):
             "assessment": {"status": "admitted"},
             "source_revision": manifest["source"]["revision"],
             "task_package": task_package_evidence(package, manifest),
+            "task_package_path": str(package),
             "environment_evidence": {
                 "image_tag": "agent-eval/test:task",
                 "image_id": "sha256:prepared-image",
@@ -119,6 +120,18 @@ class AdmissionIdentityTests(unittest.TestCase):
                 AdmittedTask.from_evidence(
                     evidence_path, source_repository=root, task_package=package
                 )
+
+    def test_attempt_uses_the_task_package_recorded_by_admission(self):
+        with tempfile.TemporaryDirectory(prefix="admission-package-") as temporary:
+            root = Path(temporary)
+            package, evidence_path, _ = self._prepare(root)
+
+            task = AdmittedTask.from_evidence(evidence_path, source_repository=root)
+
+            self.assertEqual(task.evaluator_directory, package.resolve() / "curator")
+            self.assertEqual(task.source_paths, ("app/__init__.py", "app/source.py", "app/tutor.py"))
+            self.assertEqual(task.build_network, "none")
+
 
 if __name__ == "__main__":
     unittest.main()
