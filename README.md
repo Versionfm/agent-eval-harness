@@ -56,7 +56,7 @@ Run the complete Docker attempt tests by setting `AGENT_EVAL_DOCKER_INTEGRATION=
 
 ## Run the bounded DeepSeek attempt
 
-The direct adapter calls `https://api.deepseek.com/chat/completions` with `deepseek-flash`, thinking enabled at low effort, and at most 8,192 output tokens. It preserves `reasoning_content` in follow-up tool requests, normalizes tool calls and cache usage, and applies `ModelRequest.timeout_seconds` at the blocking HTTP transport. The credential file is read by the outer Python process; the task container receives no API key.
+The direct adapter calls `https://api.deepseek.com/chat/completions` with `deepseek-flash`, thinking enabled at low effort, and at most 20,000 output tokens. It preserves `reasoning_content` in follow-up tool requests, normalizes tool calls and cache usage, and applies `ModelRequest.timeout_seconds` at the blocking HTTP transport. The credential file is read by the outer Python process; the task container receives no API key.
 
 Run the combined smoke and repair command only after creating a private text file containing the API key. The smoke uses at most 512 output tokens and must complete one provider-selected `search_text` call plus a follow-up response before the repair starts. It does not force `tool_choice`, and it never edits a repository or executes a shell command. Both stages stop before sending any request whose conservative peak-rate reservation would exceed its local or shared USD ceiling:
 
