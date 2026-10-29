@@ -1,0 +1,11 @@
+--- a/app/source.py
++++ b/app/source.py
+@@ -42,7 +42,7 @@
+ 
+ def retrieve(question: str, sections, k: int = 4) -> list[dict]:
+     """BM25 over title + text. Small, dependency-free, and easy to explain in the report."""
+-    docs = [_terms(s["text"]) for s in sections]
++    docs = [_terms(f'{s["title"]} {s["text"]}') for s in sections]
+     avg_len = sum(map(len, docs)) / len(docs)
+     df = Counter(t for d in docs for t in set(d))
+     n = len(docs)

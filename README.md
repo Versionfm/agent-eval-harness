@@ -2,6 +2,25 @@
 
 This repository is a learning project for coding-agent harness engineering and independent evaluation. The harness admits a reproducible ML Tutor retrieval task and runs coding-agent repairs through disposable environments and independent evaluation. Both explicit Python and LangGraph implementations have completed a matched live DeepSeek pair; see the [live findings and reproduction guide](docs/MATCHED_RUN.md).
 
+## Demo: one real run
+
+[examples/live-run/](examples/live-run/) is a complete live run from 2026-10-29. It shows what you get once the [requirements](#requirements) are in place. DeepSeek (`deepseek-flash`) repaired the planted ML Tutor bug twice, once driven by the Python loop and once by LangGraph:
+
+| Orchestrator | Verdict | Checks | Model calls | Estimated cost | Time |
+|---|---|---|---|---|---|
+| Python loop | success | 9/9 | 13 | USD 0.0079 | 79 s |
+| LangGraph | success | 9/9 | 12 | USD 0.0052 | 51 s |
+
+Open `examples/live-run/report.html` for the side-by-side comparison, or each attempt's `report.html`, `candidate.patch` and `checks.json`. To step through every model call and tool call in the live-tracker workbench, with no Docker, API key or cost:
+
+```bash
+PYTHONPATH=live-tracker/src python3 -m live_tracker.playback \
+  --recording examples/live-run/python-loop --recording examples/live-run/langgraph
+# open the printed http://127.0.0.1:8766/ URL
+```
+
+The run used `live_tracker.run_matched` with `--attempt-budget-usd 0.15 --shared-budget-usd 0.35` (see [live-tracker/README.md](live-tracker/README.md#live-matched-pair-18)). The copy of the task repository each attempt worked in is left out, and local paths are replaced with placeholders.
+
 The task pins `Versionfm/prompt-engineering-group-project` at `6890d9eae6ebd2967553eaf5a0c5753c26322182`. Its public description is separate from the curator-owned defect, known repair, and canonical checks. The checks use synthetic sections and an injected fake tutor response.
 
 The admission runner creates three disposable source copies, builds a digest-pinned Python 3.12.13 environment (without network access unless the task opts in for dependency installs), and probes each variant in a separate container. A probe worker has no network, one read-only task mount, and no curator evaluator, credentials, or container socket. It returns observations; the outer harness loads the curator checks and decides each result. The runner produces machine-readable evidence and a small HTML summary. Setup and evaluator errors are reported as `invalid_environment`; behavior mismatches are `rejected`.

@@ -1,0 +1,68 @@
+"""The tutor's source text: load it, find passages, read citations back out.
+
+Sections come from source/sections.jsonl (built by scripts/build_source.py).
+Citations are section ids in square brackets, e.g. [3.7.1] or [12.4.1, 3.1].
+"""
+
+import json
+import math
+import re
+from collections import Counter
+from functools import lru_cache
+from pathlib import Path
+
+SECTIONS_FILE = Path(__file__).resolve().parent.parent / "source" / "sections.jsonl"
+CITATION = re.compile(r"\[((?:[0-9W]+(?:\.[0-9]+)*)(?:\s*,\s*[0-9W]+(?:\.[0-9]+)*)*)\]")
+WORD = re.compile(r"[a-z0-9]+")
+STOPWORDS = set("the a an of to and or in on is are be by for with what why how does do it its "
+                "this that as at from can when which who use used".split())
+
+
+@lru_cache(maxsize=1)
+def load_sections() -> tuple[dict, ...]:
+    lines = SECTIONS_FILE.read_text().splitlines()
+    return tuple(json.loads(line) for line in lines if line.strip())
+
+
+def extract_citations(text: str) -> list[str]:
+    ids = []
+    for group in CITATION.findall(text):
+        ids += [part.strip() for part in group.split(",")]
+    return ids
+
+
+def passages_for(ids: list[str], sections) -> list[dict]:
+    """Every chunk a citation covers: [3.1] covers 3.1, 3.1.1, 3.1.2, ... (not 3.10)."""
+    return [s for s in sections if any(s["id"] == i or s["id"].startswith(i + ".") for i in ids)]
+
+
+def _terms(text: str) -> list[str]:
+    return [w for w in WORD.findall(text.lower()) if w not in STOPWORDS]
+
+
+def retrieve(question: str, sections, k: int = 4) -> list[dict]:
+    """BM25 over title + text. Small, dependency-free, and easy to explain in the report."""
+    docs = [_terms(s["text"]) for s in sections]
+    avg_len = sum(map(len, docs)) / len(docs)
+    df = Counter(t for d in docs for t in set(d))
+    n = len(docs)
+
+    def score(doc: list[str]) -> float:
+        tf = Counter(doc)
+        total = 0.0
+        for t in set(_terms(question)):
+            if t not in tf:
+                continue
+            idf = math.log(1 + (n - df[t] + 0.5) / (df[t] + 0.5))
+            total += idf * tf[t] * 2.2 / (tf[t] + 1.2 * (0.25 + 0.75 * len(doc) / avg_len))
+        return total
+
+    ranked = sorted(zip(sections, docs), key=lambda pair: score(pair[1]), reverse=True)
+    return [s for s, _ in ranked[:k]]
+
+
+def format_context(sections) -> str:
+    return "\n\n".join(
+        f'<section id="{s["id"]}" title="{s["title"]}" url="{s["url"]}">\n{s["text"]}\n</section>'
+        for s in sections
+    )

@@ -1,0 +1,39 @@
+# Iteration log
+
+Every attempt, including the ones we abandon (10% of the mark). One entry per
+change: what we tried, how we measured it, what happened, and why we kept or
+dropped it. Link the results file for each run.
+
+## Planned first comparison: whole source vs retrieved sections
+- **v1-full:** `python -m evals.run_evals --retrieval full` (all ~32k tokens of source in the prompt)
+- **v1-topk:** `python -m evals.run_evals --retrieval topk --k 4` (BM25, 4 best subsections)
+- Compare grounded answer rate, `correct`, cost and latency. Keep one, and log
+  why the other was abandoned.
+
+## Tutor model · 2026-10-06
+- **Tried:** DeepSeek V4 Pro, then DeepSeek V4.1 Flash, then gpt-oss-20b (all on NVIDIA). Judge stays Kimi K3.
+- **Measured:** one-word prompt ("Capital of France?"), wall time: V4 Pro 410 Gone (end of life 2026-09-14);
+  V4.1 Flash 174 s (a full cited answer took 178 s, so the wait is NVIDIA's queue, not prompt size);
+  gpt-oss-20b 1.0 s.
+- **Outcome:** gpt-oss-20b kept, since a three-minute reply can't be demoed. Not yet scored on the golden set;
+  the v1 runs below are the first to use it.
+
+## Judge model · 2026-10-07
+- **Tried:** Kimi K3 was reported to take about three minutes to first token. Poolside Laguna XS 2.1 was rejected as too small before a model call. Gemma 4 31B IT was tried next, but its calibration request waited over five minutes for response headers. Switched the judge to Meta Muse Glimmer 30B, a separate family from the gpt-oss-20b tutor. The Muse call uses temperature 0.95, top-p 1, low reasoning effort, and seed 0, following NVIDIA's API guidance for this reasoning model.
+- **Measured:** the Kimi smoke run is recorded in `evals/results/20261007-190049-tutor_v1-full.jsonl`; all 3 cases ended with `APIConnectionError`. NVIDIA's metadata route returned HTTP 200 in 0.15 s; a gpt-oss-20b control call returned at the API level in 0.8 s, though its text was empty at an eight-token cap. The first Muse prompt returned valid JSON within a 15-second timeout. Calibration matched both rows, but `calibration.jsonl` identifies them as hand-written format examples, so this is not meaningful calibration against real tutor outputs.
+- **Outcome:** Muse Glimmer is configured and the top-k eval below completed. Judge reliability remains provisional: 2/24 full-run cases failed judge parsing, and the calibration fixture has only two format examples.
+
+## v1-full smoke · 2026-10-07
+- **Tried:** Send the full source to the tutor for a three-case smoke run.
+- **Measured:** `evals/results/20261007-192800-tutor_v1-full.jsonl`; all 3 requests failed with HTTP 400 because the expanded source exceeded the model's context limit (`max_tokens` calculated below zero).
+- **Outcome:** Full-source retrieval is not viable with the current 335-section, 1.24-million-character source. Switched to top-4 retrieval for the scored run.
+
+## v1-topk4 · 2026-10-07
+- **Tried:** `python -m evals.run_evals --prompt prompts/tutor_v1.md --retrieval topk --k 4`.
+- **Measured:** smoke results are in `evals/results/20261007-192951-tutor_v1-topk4.jsonl` (3 cases, 0 errors, grounded answer rate 33.3%). The full results are in `evals/results/20261007-194045-tutor_v1-topk4.jsonl` (24 cases, 2 judge-parse errors, 8 grounded answers; grounded answer rate 33.3%, citation check 59.1%, check-question check 95.5%, judge supported 36.4%, judge correct 77.3%). The full-run rates exclude the two parse errors except grounded answer rate, whose denominator is all 24 cases.
+- **Outcome:** Top-4 retrieval completed the full set; the prompt remains unchanged. The measured grounded answer rate is low, and the two judge-parse errors plus placeholder calibration limit confidence in the score. Failure patterns from all 24 answers are recorded in `evals/failure_taxonomy.md`.
+
+## Judge model · 2026-10-09
+- **Tried:** Replaced Muse Glimmer 30B with NVIDIA Nemotron 3 Super 120B (`nvidia/nemotron-3-super-120b-a12b`) as judge, still a separate family from the gpt-oss-20b tutor. Muse was abandoned because 2/24 full-run cases failed judge parsing, and NVIDIA's guidance has it sampled at temperature 0.95, so verdicts are not repeatable. Nemotron uses the default temperature-0 path. In a one-line JSON probe on 2026-10-07 it answered in 1.3 s; Kimi K3 took 48 s.
+- **Measured:** `python -m evals.run_evals --prompt prompts/tutor_v1.md --retrieval topk --k 4`. Smoke: `evals/results/20261009-142243-tutor_v1-topk4.jsonl` (3 cases, 0 errors, grounded 33.3%). Full: `evals/results/20261009-143024-tutor_v1-topk4.jsonl` (24 cases, 0 parse errors, 6 grounded answers; grounded answer rate 25.0%, citation check 41.7%, check-question check 87.5%, judge supported 25.0%, judge correct 83.3%), 7.5 min wall time. Muse run for comparison: grounded 33.3%, citation 59.1%, supported 36.4%, correct 77.3%, 2 parse errors.
+- **Outcome:** Nemotron kept as judge: no parse errors and deterministic decoding. The runs are not a judge-only comparison, because the tutor answers were regenerated: the citation check is code, not the judge, and it fell from 59.1% to 41.7%, so tutor variance explains part of the lower grounded rate. Calibration still uses only the two hand-written format examples in `evals/rubric/calibration.jsonl`, so the judge is not really calibrated yet.

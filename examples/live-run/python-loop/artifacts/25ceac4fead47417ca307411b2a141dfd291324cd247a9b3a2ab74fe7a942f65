@@ -1,0 +1,38 @@
+"""The one job: answer a classmate's question from the source, with citations.
+
+Two ways to give the model the source, compared in the evals:
+  retrieval="topk"  only the k sections BM25 ranks highest for the question (default)
+  retrieval="full"  every section in the prompt. Abandoned on 2026-10-07: the
+                    source grew to ~1.24M characters, past the model's context
+                    window (see docs/iteration_log.md).
+"""
+
+from app.source import format_context, load_sections, retrieve
+
+DEFAULT_PROMPT = "prompts/tutor_v1.md"
+MODES = ("explain", "quiz")
+
+
+def answer(question: str, chat=None, sections=None, prompt: str | None = None,
+           history: list[dict] | None = None, mode: str = "explain",
+           retrieval: str = "topk", k: int = 4) -> str:
+    if chat is None:
+        from app.llm import tutor_chat as chat
+    if prompt is None:
+        from app.llm import load_prompt
+        prompt = load_prompt(DEFAULT_PROMPT)
+    if sections is None:
+        sections = load_sections()
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {MODES}")
+
+    if retrieval == "full":
+        context = sections
+    elif retrieval == "topk":
+        context = retrieve(question, sections, k=k)
+    else:
+        raise ValueError("retrieval must be 'full' or 'topk'")
+
+    system = f"{prompt}\n\nMode: {mode}\n\n<source>\n{format_context(context)}\n</source>"
+    messages = [*(history or []), {"role": "user", "content": question}]
+    return chat(system, messages)

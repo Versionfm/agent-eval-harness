@@ -1,0 +1,33 @@
+{
+  "checks": {
+    "body_relevance": true,
+    "case_normalization": true,
+    "full_context_bypass": true,
+    "history_mode": true,
+    "input_immutable": true,
+    "input_order_independence": true,
+    "title_context": true,
+    "title_retrieval": true,
+    "top_k_limit": true
+  },
+  "container_configuration": {
+    "credentials_or_container_socket_mounted": false,
+    "evaluator_mount_present": false,
+    "network_mode": "none",
+    "root_filesystem_read_only": true,
+    "task_mount_read_only": true
+  },
+  "messages": {
+    "body_relevance": "body-text match ranked first",
+    "case_normalization": "uppercase query matched lowercase body terms",
+    "full_context_bypass": "full-context mode included all passages",
+    "history_mode": "history and quiz mode were preserved",
+    "input_immutable": "retrieval preserved its input passages",
+    "input_order_independence": "title match ranked first in both input orders",
+    "title_context": "tutor context included the title match only",
+    "title_retrieval": "title-matched passage ranked first",
+    "top_k_limit": "k=2 returned two passages"
+  },
+  "python_version": "3.12.13",
+  "status": "completed"
+}

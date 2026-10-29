@@ -1,0 +1,725 @@
+{
+  "acceptance_check_version": "1.0.0",
+  "admission_evidence": "/path/to/evidence/admission/admission.json",
+  "admission_recorded_image_id": "sha256:c7374ece47bc87cbaea006e579d93d4cefc3fef34fbf3f9406d1f5aae18cae36",
+  "attempt_duration_seconds": 78.754187,
+  "attempt_repository": "examples/live-run/python-loop/task-repository",
+  "budget_calibration_note": "Numeric values are configurable proposals; calibrate before benchmark comparisons.",
+  "budget_calibration_status": "configurable_proposal",
+  "budgets": {
+    "attempt_deadline_seconds": 600.0,
+    "cleanup_timeout_seconds": 5,
+    "evaluation_timeout_seconds": 90,
+    "max_context_bytes": 131072,
+    "max_graph_steps": null,
+    "max_model_calls": 30,
+    "max_provider_retries": 1,
+    "provider_retry_delay_seconds": 0,
+    "shell_timeout_seconds": 60,
+    "tool_output_limit_bytes": 16384
+  },
+  "context_bytes_at_last_check": 72095,
+  "cost": {
+    "estimated": {
+      "amount": 0.007908642,
+      "currency": "USD",
+      "missing_usage_calls": 0,
+      "request_count": 13,
+      "status": "estimated"
+    },
+    "reported": {
+      "amount": null,
+      "currency": "USD",
+      "missing_charge_calls": 13,
+      "request_count": 13,
+      "status": "unavailable"
+    }
+  },
+  "credential_location": "outer harness; excluded from attempt metadata and artifacts",
+  "dependency_versions": {
+    "annotated-types": "0.8.0",
+    "anyio": "4.15.1",
+    "certifi": "2026.7.22",
+    "charset-normalizer": "3.5.2",
+    "distro": "1.9.0",
+    "h11": "0.16.0",
+    "httpcore": "1.0.9",
+    "httpcore2": "2.13.1",
+    "httpx": "0.28.1",
+    "httpx2": "2.13.1",
+    "idna": "3.20",
+    "jsonpatch": "1.34",
+    "jsonpointer": "3.2.0",
+    "langchain-core": "1.6.9",
+    "langchain-protocol": "0.0.19",
+    "langgraph": "1.2.14",
+    "langgraph-checkpoint": "4.2.0",
+    "langgraph-prebuilt": "1.1.0",
+    "langgraph-sdk": "0.4.6",
+    "langsmith": "0.14.7",
+    "orjson": "3.13.0",
+    "ormsgpack": "1.12.2",
+    "packaging": "26.3",
+    "pip": "24.0",
+    "pydantic": "2.14.0",
+    "pydantic-core": "2.50.0",
+    "python-runtime": "3.12.3",
+    "pyyaml": "6.0.3",
+    "requests": "2.34.2",
+    "requests-toolbelt": "1.0.0",
+    "sniffio": "1.3.1",
+    "tenacity": "9.2.1",
+    "truststore": "0.10.4",
+    "typing-extensions": "4.16.0",
+    "typing-inspection": "0.4.4",
+    "urllib3": "2.8.0",
+    "uuid-utils": "0.17.1",
+    "websockets": "16.1.1",
+    "xxhash": "4.0.1",
+    "zstandard": "0.25.0"
+  },
+  "documented_model_version": "DeepSeek-V4.1-Flash",
+  "duration_seconds": 79.344831,
+  "execution_mode": "live_https",
+  "finished_at": "2026-10-29T13:54:36.821406+00:00",
+  "harness_revision": {
+    "commit": "127fd085e52395b507a64c56265a79f889fbb9c1",
+    "working_tree": "clean",
+    "working_tree_sha256": null
+  },
+  "initial_context_sha256": "6a2b94d1f73ff26552042caae8d23076a6e43ba4bd3bf690a8b73d830fd2f066",
+  "model_call_count": 13,
+  "model_settings": {
+    "max_output_tokens": 20000,
+    "reasoning_effort": "low",
+    "thinking": "enabled"
+  },
+  "observed_models": [
+    "deepseek-flash"
+  ],
+  "orchestrator": "python-loop",
+  "pricing_source_checked_at": "2026-10-10",
+  "pricing_source_url": "https://api-docs.deepseek.com/quick_start/pricing/",
+  "pricing_timestamp_utc": "2026-10-29T13:53:17.476534+00:00",
+  "provider": "deepseek",
+  "provider_endpoint": "https://api.deepseek.com/chat/completions",
+  "qualitative_review": {
+    "status": "pending"
+  },
+  "repository_capture": {
+    "capture_seconds": 1.040161,
+    "captures": 11,
+    "limits": {
+      "max_preview_bytes": 4096,
+      "max_seconds": 2.0,
+      "max_total_bytes": 4194304
+    },
+    "schema": "agent-eval-harness/repository-capture",
+    "schema_version": 1,
+    "status_counts": {
+      "captured": 11
+    }
+  },
+  "requested_model": "deepseek-flash",
+  "retry_count": 0,
+  "runtime_version": "3.12.13",
+  "schema_version": "1",
+  "source_revision": "6890d9eae6ebd2967553eaf5a0c5753c26322182",
+  "spend_budget": {
+    "limit_usd": 0.15,
+    "name": "python-loop repair attempt",
+    "remaining_usd": 0.142091358,
+    "reserved_or_estimated_usd": 0.007908642,
+    "shared_budget": {
+      "limit_usd": 0.35,
+      "name": "smoke-plus-matched-attempts",
+      "remaining_usd": 0.341995454,
+      "reserved_or_estimated_usd": 0.008004546,
+      "status": "within_limit"
+    },
+    "status": "within_limit"
+  },
+  "started_at": "2026-10-29T13:53:17.446590+00:00",
+  "task_container_image": "agent-eval-harness/task-admission:5a5a1fa17d2c47f0acdc185db78f812a",
+  "task_id": "ml-tutor-title-relevance",
+  "task_identity": {
+    "acceptance_check_ids": [
+      "title_retrieval",
+      "title_context",
+      "body_relevance",
+      "case_normalization",
+      "top_k_limit",
+      "input_immutable",
+      "full_context_bypass",
+      "history_mode",
+      "input_order_independence"
+    ],
+    "acceptance_check_version": "1.0.0",
+    "source_revision": "6890d9eae6ebd2967553eaf5a0c5753c26322182",
+    "task_id": "ml-tutor-title-relevance",
+    "task_version": "1.0.0"
+  },
+  "task_image_evidence": {
+    "admission_image_id": "sha256:c7374ece47bc87cbaea006e579d93d4cefc3fef34fbf3f9406d1f5aae18cae36",
+    "build_network": "none",
+    "build_output_excerpt": "4a95789d2315a47db7e4d27e78f1b0e9\n#2 DONE 0.0s\n\n#3 [internal] load .dockerignore\n#3 transferring context: 2B done\n#3 DONE 0.0s\n\n#4 [1/2] FROM docker.io/library/python:3.12-slim@sha256:d764629ce0ddd8c71fd371e9901efb324a95789d2315a47db7e4d27e78f1b0e9\n#4 resolve docker.io/library/python:3.12-slim@sha256:d764629ce0ddd8c71fd371e9901efb324a95789d2315a47db7e4d27e78f1b0e9 0.0s done\n#4 DONE 0.0s\n\n#5 [2/2] WORKDIR /task\n#5 CACHED\n\n#6 exporting to image\n#6 exporting layers 0.0s done\n#6 exporting manifest sha256:4345c5f94aecda443f34921b80496133e05a7a299d55bb165100e1ac939642b3 done\n#6 exporting config sha256:0390c0c0152e0771451c50192a2df29f62699407f7af8e6d3efffd49bb7bf715 done\n#6 exporting attestation manifest sha256:3c363f4a0977d1650ef45c87d1b6c167e1b235424aa119d039ecdb6a924fafb4\n#6 exporting attestation manifest sha256:3c363f4a0977d1650ef45c87d1b6c167e1b235424aa119d039ecdb6a924fafb4 0.0s done\n#6 exporting manifest list sha256:e4f7a2807b4ed179782c2056341d88033d7af733a367e7c84147cf94144eeaf6 done\n#6 naming to docker.io/agent-eval-harness/task-attempt:44fd449bcb0443a88c317ef62376c540 done\n#6 unpacking to docker.io/agent-eval-harness/task-attempt:44fd449bcb0443a88c317ef62376c540 done\n#6 DONE 0.1s\n",
+    "build_pull": false,
+    "build_status": "passed",
+    "docker_server_version": "29.1.3",
+    "dockerfile_sha256": "181c9f9fbb50d1ad8da159a4c1d90719166e091d3d4541337a085d848117fc2e",
+    "image_id": "sha256:e4f7a2807b4ed179782c2056341d88033d7af733a367e7c84147cf94144eeaf6",
+    "image_tag": "agent-eval-harness/task-attempt:44fd449bcb0443a88c317ef62376c540",
+    "runtime_version": "3.12.13"
+  },
+  "task_package_sha256": "f0d1518f588ea6b1644556bd9d2ac456e74af932e3b47b5b8267836b3a11fa7a",
+  "task_version": "1.0.0",
+  "transport_timeout": "ModelRequest.timeout_seconds applied to blocking HTTP I/O",
+  "usage_by_call": [
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.000117414,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:53:20.108833+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0267192
+      },
+      "completion_tokens": 148,
+      "completion_tokens_details": {
+        "reasoning_tokens": 13
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 2688,
+      "prompt_cache_miss_tokens": 137,
+      "prompt_tokens": 2825,
+      "prompt_tokens_details": {
+        "cached_tokens": 2688
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 13,
+      "total_tokens": 2973
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.000570732,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:53:23.305147+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0299001
+      },
+      "completion_tokens": 236,
+      "completion_tokens_details": {
+        "reasoning_tokens": 157
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 2944,
+      "prompt_cache_miss_tokens": 2802,
+      "prompt_tokens": 5746,
+      "prompt_tokens_details": {
+        "cached_tokens": 2944
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 157,
+      "total_tokens": 5982
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.000831564,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:53:31.996006+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0312435
+      },
+      "completion_tokens": 1113,
+      "completion_tokens_details": {
+        "reasoning_tokens": 1035
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 5888,
+      "prompt_cache_miss_tokens": 974,
+      "prompt_tokens": 6862,
+      "prompt_tokens_details": {
+        "cached_tokens": 5888
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 1035,
+      "total_tokens": 7975
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 9.1308e-05,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:53:33.602811+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0329361
+      },
+      "completion_tokens": 77,
+      "completion_tokens_details": {
+        "reasoning_tokens": 12
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 7936,
+      "prompt_cache_miss_tokens": 142,
+      "prompt_tokens": 8078,
+      "prompt_tokens_details": {
+        "cached_tokens": 7936
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 12,
+      "total_tokens": 8155
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.001130442,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:53:45.169892+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.033732
+      },
+      "completion_tokens": 1666,
+      "completion_tokens_details": {
+        "reasoning_tokens": 1555
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 8064,
+      "prompt_cache_miss_tokens": 711,
+      "prompt_tokens": 8775,
+      "prompt_tokens_details": {
+        "cached_tokens": 8064
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 1555,
+      "total_tokens": 10441
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.000881454,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:53:53.823935+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0362244
+      },
+      "completion_tokens": 1354,
+      "completion_tokens_details": {
+        "reasoning_tokens": 786
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 10368,
+      "prompt_cache_miss_tokens": 253,
+      "prompt_tokens": 10621,
+      "prompt_tokens_details": {
+        "cached_tokens": 10368
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 786,
+      "total_tokens": 11975
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.000294642,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:53:56.056961+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0379983
+      },
+      "completion_tokens": 242,
+      "completion_tokens_details": {
+        "reasoning_tokens": 14
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 11264,
+      "prompt_cache_miss_tokens": 771,
+      "prompt_tokens": 12035,
+      "prompt_tokens_details": {
+        "cached_tokens": 11264
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 14,
+      "total_tokens": 12277
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.00177273,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:54:14.129483+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0384927
+      },
+      "completion_tokens": 2837,
+      "completion_tokens_details": {
+        "reasoning_tokens": 2053
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 12160,
+      "prompt_cache_miss_tokens": 227,
+      "prompt_tokens": 12387,
+      "prompt_tokens_details": {
+        "cached_tokens": 12160
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 2053,
+      "total_tokens": 15224
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.000257112,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:54:16.479783+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0422181
+      },
+      "completion_tokens": 308,
+      "completion_tokens_details": {
+        "reasoning_tokens": 3
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 15104,
+      "prompt_cache_miss_tokens": 180,
+      "prompt_tokens": 15284,
+      "prompt_tokens_details": {
+        "cached_tokens": 15104
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 3,
+      "total_tokens": 15592
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.000593514,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:54:22.729104+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0427881
+      },
+      "completion_tokens": 857,
+      "completion_tokens_details": {
+        "reasoning_tokens": 445
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 15488,
+      "prompt_cache_miss_tokens": 219,
+      "prompt_tokens": 15707,
+      "prompt_tokens_details": {
+        "cached_tokens": 15488
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 445,
+      "total_tokens": 16564
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.000385152,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:54:25.833343+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0439731
+      },
+      "completion_tokens": 500,
+      "completion_tokens_details": {
+        "reasoning_tokens": 36
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 16384,
+      "prompt_cache_miss_tokens": 240,
+      "prompt_tokens": 16624,
+      "prompt_tokens_details": {
+        "cached_tokens": 16384
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 36,
+      "total_tokens": 17124
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.000125022,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:54:27.478410+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.044724
+      },
+      "completion_tokens": 83,
+      "completion_tokens_details": {
+        "reasoning_tokens": 10
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 17024,
+      "prompt_cache_miss_tokens": 161,
+      "prompt_tokens": 17185,
+      "prompt_tokens_details": {
+        "cached_tokens": 17024
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 10,
+      "total_tokens": 17268
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 0.000857556,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:54:36.036436+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0460419
+      },
+      "completion_tokens": 1020,
+      "completion_tokens_details": {
+        "reasoning_tokens": 860
+      },
+      "observed_model": "deepseek-flash",
+      "prompt_cache_hit_tokens": 17152,
+      "prompt_cache_miss_tokens": 1294,
+      "prompt_tokens": 18446,
+      "prompt_tokens_details": {
+        "cached_tokens": 17152
+      },
+      "provider_finish_reason": "stop",
+      "reasoning_tokens": 860,
+      "total_tokens": 19466
+    }
+  ]
+}
