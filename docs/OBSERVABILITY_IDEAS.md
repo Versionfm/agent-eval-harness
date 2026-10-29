@@ -22,7 +22,7 @@ Candidate implementation order: establish durable event recording and live/repla
 
 ## Current evidence to inspect
 
-The first real pair is preserved outside Git at `/home/francisco/Documents/Codex/2026-10-10/d/outputs/evidence/live-first-2026-10-10/`. Python passed nine canonical checks after a one-line repair, then stopped at its output limit. LangGraph passed six checks and reached its call limit without saving a patch. These are useful playback examples, not orchestrator rankings.
+The first real pair is preserved outside Git at `../evidence/live-first-2026-10-10/` (next to the repository). Python passed nine canonical checks after a one-line repair, then stopped at its output limit. LangGraph passed six checks and reached its call limit without saving a patch. These are useful playback examples, not orchestrator rankings.
 
 The first UI could teach directly from those records while making their recording limits visible. Future runs could provide richer observation through the same attempt/evaluator boundaries.
 

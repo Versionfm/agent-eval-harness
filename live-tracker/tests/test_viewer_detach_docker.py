@@ -19,7 +19,7 @@ LIVE_SOURCE = REPOSITORY_ROOT / "live-tracker" / "src"
 DOCKER_INTEGRATION = os.environ.get("AGENT_EVAL_DOCKER_INTEGRATION") == "1"
 ADMISSION_EVIDENCE = os.environ.get("ML_TUTOR_ADMISSION_EVIDENCE")
 SOURCE_REPOSITORY = os.environ.get(
-    "ML_TUTOR_REPOSITORY", "/home/francisco/prompt-engineering-group-project"
+    "ML_TUTOR_REPOSITORY", str(REPOSITORY_ROOT.parent / "prompt-engineering-group-project")
 )
 
 

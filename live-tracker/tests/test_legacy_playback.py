@@ -16,7 +16,7 @@ from live_tracker.reader import read_attempt_history
 
 LEGACY_ROOT = Path(os.environ.get(
     "LIVE_FIRST_EVIDENCE",
-    "/home/francisco/Documents/Codex/2026-10-10/d/outputs/evidence/live-first-2026-10-10",
+    str(Path(__file__).resolve().parents[3] / "evidence" / "live-first-2026-10-10"),
 ))
 PAIR = ("python-loop", "langgraph")
 NEW_ONLY_TYPES = {

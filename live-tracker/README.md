@@ -218,21 +218,21 @@ Budgets: combined USD 0.10 ceiling, smoke USD 0.01, each repair attempt USD 0.04
 Parity prerequisite, scripted with no provider call (the committed comparison pins an older harness revision, so regenerate it):
 
 ```bash
-PYTHON=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/runtime/bin/python
-ROOT=/home/francisco/Documents/Codex/2026-10-10/d/outputs/agent-eval-harness
-ADMISSION=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/final/admission/admission.json
-PARITY=/home/francisco/Documents/Codex/2026-10-10/d/work/orchestration/evidence/live-tracker-2026-10-10-parity
+PYTHON=/path/to/venv/bin/python
+ROOT=/path/to/agent-eval-harness
+ADMISSION=/path/to/evidence/admission/admission.json
+PARITY=/path/to/evidence/live-tracker-parity
 cd "$ROOT"
 "$PYTHON" -m agent_eval_harness.cli.run_langgraph_parity --admission-evidence "$ADMISSION" \
-  --source-repository /home/francisco/prompt-engineering-group-project --output-dir "$PARITY"
+  --source-repository /path/to/prompt-engineering-group-project --output-dir "$PARITY"
 ```
 
 Live command (one paid pair, the only paid run in this ticket; the lead runs it after review):
 
 ```bash
-EVIDENCE=/home/francisco/Documents/Codex/2026-10-10/d/outputs/evidence/live-tracker-2026-10-10
+EVIDENCE=/path/to/evidence/live-tracker
 PYTHONPATH=live-tracker/src "$PYTHON" -m live_tracker.run_matched \
-  --credential-file /home/francisco/.config/agent-eval-harness/deepseek-api-key.txt \
+  --credential-file /path/to/deepseek-api-key.txt \
   --admission-evidence "$ADMISSION" --parity-evidence "$PARITY/comparison.json" \
   --artifact-dir "$EVIDENCE"
 ```
