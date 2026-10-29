@@ -1,0 +1,55 @@
+import unittest
+
+from app.tutor import answer
+
+SECTIONS = (
+    {"id": "3.7.1", "title": "Norms and Weight Decay", "url": "u",
+     "text": "Weight decay adds an L2 penalty on the weights to the loss."},
+    {"id": "12.4.1", "title": "Stochastic Gradient Updates", "url": "u",
+     "text": "Stochastic gradient descent uses one example per update."},
+)
+
+
+class FakeChat:
+    def __init__(self, reply="ok [3.7.1]"):
+        self.reply, self.calls = reply, []
+
+    def __call__(self, system, messages):
+        self.calls.append((system, messages))
+        return self.reply
+
+
+class AnswerTest(unittest.TestCase):
+    def test_full_context_puts_every_section_in_the_system_prompt(self):
+        chat = FakeChat()
+        answer("What is weight decay?", chat=chat, sections=SECTIONS, prompt="RULES",
+               retrieval="full")
+        system, messages = chat.calls[0]
+        self.assertIn("RULES", system)
+        self.assertIn('id="3.7.1"', system)
+        self.assertIn('id="12.4.1"', system)
+        self.assertEqual(messages[-1], {"role": "user", "content": "What is weight decay?"})
+
+    def test_topk_puts_only_the_retrieved_sections_in_the_prompt(self):
+        chat = FakeChat()
+        answer("What is weight decay?", chat=chat, sections=SECTIONS, prompt="RULES",
+               retrieval="topk", k=1)
+        system, _ = chat.calls[0]
+        self.assertIn('id="3.7.1"', system)
+        self.assertNotIn('id="12.4.1"', system)
+
+    def test_default_sends_only_retrieved_sections_so_a_large_source_fits(self):
+        chat = FakeChat()
+        answer("What is weight decay?", chat=chat, sections=SECTIONS, prompt="RULES", k=1)
+        system, _ = chat.calls[0]
+        self.assertIn('id="3.7.1"', system)
+        self.assertNotIn('id="12.4.1"', system)
+
+    def test_history_and_mode_reach_the_model(self):
+        chat = FakeChat()
+        history = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+        answer("quiz me", chat=chat, sections=SECTIONS, prompt="RULES", history=history,
+               mode="quiz")
+        system, messages = chat.calls[0]
+        self.assertIn("Mode: quiz", system)
+        self.assertEqual(messages[:2], history)

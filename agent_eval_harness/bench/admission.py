@@ -1,27 +1,11 @@
 """Bench · admission rules for evaluator-owned task evidence."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import hashlib
 import json
 from pathlib import Path
 
 
-CHECK_IDS = (
-    "title_retrieval",
-    "title_context",
-    "body_relevance",
-    "case_normalization",
-    "top_k_limit",
-    "input_immutable",
-    "full_context_bypass",
-    "history_mode",
-    "input_order_independence",
-)
-TITLE_RELEVANCE_FAILURES = (
-    "title_retrieval",
-    "title_context",
-    "input_order_independence",
-)
 VARIANT_NAMES = ("baseline", "defect", "repair")
 
 
@@ -56,8 +40,10 @@ def task_package_evidence(task_package: Path, manifest: Mapping) -> dict:
     }
 
 
-def assess_admission(runs: Mapping[str, Mapping]) -> dict:
-    """Classify baseline, defect, and repair runs from canonical check evidence."""
+def assess_admission(
+    runs: Mapping[str, Mapping], check_ids: Sequence[str], expected_defect_failures: Sequence[str]
+) -> dict:
+    """Classify baseline, defect, and repair runs against the manifest's checks and expected defect failures."""
     invalid_runs = []
     for name in VARIANT_NAMES:
         run = runs.get(name)
@@ -67,7 +53,7 @@ def assess_admission(runs: Mapping[str, Mapping]) -> dict:
         checks = run.get("checks")
         if (
             not isinstance(checks, Mapping)
-            or set(checks) != set(CHECK_IDS)
+            or set(checks) != set(check_ids)
             or any(type(value) is not bool for value in checks.values())
         ):
             invalid_runs.append(name)
@@ -80,12 +66,12 @@ def assess_admission(runs: Mapping[str, Mapping]) -> dict:
         }
 
     failed = {
-        name: [check_id for check_id in CHECK_IDS if runs[name]["checks"][check_id] is not True]
+        name: [check_id for check_id in check_ids if runs[name]["checks"][check_id] is not True]
         for name in VARIANT_NAMES
     }
     expected = {
         "baseline": [],
-        "defect": list(TITLE_RELEVANCE_FAILURES),
+        "defect": [check_id for check_id in check_ids if check_id in expected_defect_failures],
         "repair": [],
     }
     reasons = []

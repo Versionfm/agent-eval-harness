@@ -1,0 +1,42 @@
+app/tutor.py:10:from app.source import format_context, load_sections, retrieve
+app/tutor.py:32:        context = retrieve(question, sections, k=k)
+app/tutor.py:36:    system = f"{prompt}\n\nMode: {mode}\n\n<source>\n{format_context(context)}\n</source>"
+app/source.py:43:def retrieve(question: str, sections, k: int = 4) -> list[dict]:
+app/source.py:44:    """BM25 over title + text. Small, dependency-free, and easy to explain in the report."""
+app/source.py:64:def format_context(sections) -> str:
+app/source.py:66:        f'<section id="{s["id"]}" title="{s["title"]}" url="{s["url"]}">\n{s["text"]}\n</section>'
+app/streamlit_app.py:17:st.set_page_config(page_title="ML Tutor", page_icon="📘")
+app/streamlit_app.py:18:st.title("ML Tutor")
+app/streamlit_app.py:34:                st.markdown(f"**[{s['id']}]** [{s['title']}]({s['url']})")
+tests/test_build_source.py:48:            [(c["id"], c["title"]) for c in self.chunks],
+tests/test_tutor.py:6:    {"id": "3.7.1", "title": "Norms and Weight Decay", "url": "u",
+tests/test_tutor.py:8:    {"id": "12.4.1", "title": "Stochastic Gradient Updates", "url": "u",
+tests/test_tutor.py:33:    def test_topk_puts_only_the_retrieved_sections_in_the_prompt(self):
+tests/test_tutor.py:41:    def test_default_sends_only_retrieved_sections_so_a_large_source_fits(self):
+tests/test_source.py:3:from app.source import extract_citations, passages_for, retrieve
+tests/test_source.py:6:    {"id": "3.1", "title": "Linear Regression", "url": "u", "text": "Regression predicts a number."},
+tests/test_source.py:7:    {"id": "3.1.1", "title": "Basics", "url": "u", "text": "Squared loss and the analytic solution."},
+tests/test_source.py:8:    {"id": "3.7.1", "title": "Norms and Weight Decay", "url": "u",
+tests/test_source.py:10:    {"id": "3.10", "title": "Unrelated", "url": "u", "text": "Something else entirely."},
+tests/test_source.py:11:    {"id": "12.4.1", "title": "Stochastic Gradient Updates", "url": "u",
+tests/test_source.py:30:        top = retrieve("what does weight decay do to the weights?", SECTIONS, k=2)
+evals/METRIC.md:19:"answer from a document" is "was the right passage retrieved, and is every
+evals/run_evals.py:66:    from app.source import extract_citations, format_context, passages_for
+evals/run_evals.py:74:                          dimensions=dimensions, passages=format_context(cited))
+evals/run_evals.py:88:    parser.add_argument("--k", type=int, default=4, help="sections retrieved with --retrieval topk")
+evals/render_html_reports.py:130:def page(title: str, body: str) -> str:
+evals/render_html_reports.py:133:<title>{escape(title)}</title><style>{STYLE}</style></head><body>{body}</body></html>
+scripts/build_source.py:8:and writes one chunk per line: {"id", "title", "url", "text"}.
+scripts/build_source.py:93:                 "&redirects=1&format=json&titles=")
+scripts/build_source.py:118:    title_match = re.search(r"^# +(.+)$", intro, flags=re.MULTILINE)
+scripts/build_source.py:119:    title = title_match.group(1).strip() if title_match else number
+scripts/build_source.py:122:    chunks = [{"id": number, "title": title, "url": url, "text": intro}]
+scripts/build_source.py:128:        chunks.append({"id": f"{number}.{i}", "title": heading, "url": url, "text": body.strip()})
+scripts/build_source.py:138:def _wikipedia(prefix: str, title: str) -> list[dict]:
+scripts/build_source.py:140:    pages = json.loads(_get(WIKIPEDIA_API + urllib.parse.quote(title)))["query"]["pages"]
+scripts/build_source.py:142:    url = "https://en.wikipedia.org/wiki/" + urllib.parse.quote(title.replace(" ", "_"))
+scripts/build_source.py:144:    chunks = [{"id": f"{prefix}.0", "title": title, "url": url, "text": parts[0].strip()}]
+scripts/build_source.py:148:            chunks.append({"id": f"{prefix}.{i}", "title": f"{title}: {heading.strip()}",
+scripts/build_source.py:157:    for prefix, title in WIKIPEDIA:
+scripts/build_source.py:159:            chunks += _wikipedia(prefix, title)
+scripts/build_source.py:161:            print(f"WARNING: Wikipedia {title!r} not fetched ({e}); re-run where it is reachable")

@@ -1,0 +1,100 @@
+--- a/app/source.py
++++ b/app/source.py
+@@ -40,25 +40,41 @@
+     return [w for w in WORD.findall(text.lower()) if w not in STOPWORDS]
+ 
+ 
++TITLE_WEIGHT = 3.0
++
++
+ def retrieve(question: str, sections, k: int = 4) -> list[dict]:
+     """BM25 over title + text. Small, dependency-free, and easy to explain in the report."""
+-    docs = [_terms(s["text"]) for s in sections]
+-    avg_len = sum(map(len, docs)) / len(docs)
+-    df = Counter(t for d in docs for t in set(d))
+-    n = len(docs)
++    query = set(_terms(question))
+ 
+-    def score(doc: list[str]) -> float:
+-        tf = Counter(doc)
+-        total = 0.0
+-        for t in set(_terms(question)):
+-            if t not in tf:
+-                continue
+-            idf = math.log(1 + (n - df[t] + 0.5) / (df[t] + 0.5))
+-            total += idf * tf[t] * 2.2 / (tf[t] + 1.2 * (0.25 + 0.75 * len(doc) / avg_len))
+-        return total
++    def bm25(docs: list[list[str]]) -> list[float]:
++        avg_len = sum(map(len, docs)) / len(docs)
++        df = Counter(t for d in docs for t in set(d))
++        n = len(docs)
+ 
+-    ranked = sorted(zip(sections, docs), key=lambda pair: score(pair[1]), reverse=True)
+-    return [s for s, _ in ranked[:k]]
++        def score(doc: list[str]) -> float:
++            tf = Counter(doc)
++            total = 0.0
++            for t in query:
++                if t not in tf:
++                    continue
++                idf = math.log(1 + (n - df[t] + 0.5) / (df[t] + 0.5))
++                total += idf * tf[t] * 2.2 / (tf[t] + 1.2 * (0.25 + 0.75 * len(doc) / avg_len))
++            return total
++
++        return [score(doc) for doc in docs]
++
++    # Keep body relevance exactly as before, then add a separate title score. A
++    # title is a short, deliberate summary, so a heading match gets extra weight
++    # even when the body never repeats those words.
++    body_scores = bm25([_terms(s["text"]) for s in sections])
++    title_scores = bm25([_terms(s["title"]) for s in sections])
++    ranked = sorted(
++        zip(sections, body_scores, title_scores),
++        key=lambda row: row[1] + TITLE_WEIGHT * row[2],
++        reverse=True,
++    )
++    return [s for s, _, _ in ranked[:k]]
+ 
+ 
+ def format_context(sections) -> str:
+--- a/tests/test_source.py
++++ b/tests/test_source.py
+@@ -30,3 +30,18 @@
+         top = retrieve("what does weight decay do to the weights?", SECTIONS, k=2)
+         self.assertEqual(top[0]["id"], "3.7.1")
+         self.assertEqual(len(top), 2)
++
++    def test_a_heading_match_surfaces_even_when_its_body_never_repeats_the_words(self):
++        sections = [
++            {"id": "other", "title": "Optimization Notes", "url": "u",
++             "text": "Gradient methods update parameters."},
++            {"id": "3.4", "title": "Gradient Descent", "url": "u",
++             "text": "A method that follows the slope downhill."},
++        ]
++        top = retrieve("What is GRADIENT DESCENT?", sections, k=1)
++        self.assertEqual(top[0]["id"], "3.4")
++
++    def test_retrieval_does_not_change_the_input_sections(self):
++        before = [dict(s) for s in SECTIONS]
++        retrieve("weight decay", SECTIONS, k=1)
++        self.assertEqual(SECTIONS, before)
+--- a/tests/test_tutor.py
++++ b/tests/test_tutor.py
+@@ -53,3 +53,17 @@
+         system, messages = chat.calls[0]
+         self.assertIn("Mode: quiz", system)
+         self.assertEqual(messages[:2], history)
++
++    def test_topk_context_includes_a_section_matched_only_by_its_heading(self):
++        sections = (
++            {"id": "other", "title": "Optimization Notes", "url": "u",
++             "text": "Gradient methods update parameters."},
++            {"id": "3.4", "title": "Gradient Descent", "url": "u",
++             "text": "A method that follows the slope downhill."},
++        )
++        chat = FakeChat()
++        answer("What is gradient descent?", chat=chat, sections=sections, prompt="RULES",
++               retrieval="topk", k=1)
++        system, _ = chat.calls[0]
++        self.assertIn('id="3.4"', system)
++        self.assertNotIn('id="other"', system)

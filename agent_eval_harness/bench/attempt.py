@@ -17,6 +17,7 @@ from agent_eval_harness.bench.environment import (
     build_task_environment,
     prepare_defective_repository,
     run_canonical_checks,
+    task_build_network,
 )
 from agent_eval_harness.harness.permissions import DockerTaskContainer, EnvironmentFailure
 from agent_eval_harness.bench.admission import task_package_evidence
@@ -135,6 +136,8 @@ class AdmittedTask:
     dockerfile_path: Path
     expected_base_image: str
     admission_evidence_path: Path
+    source_paths: tuple[str, ...]
+    build_network: str
 
     @classmethod
     def from_evidence(
@@ -142,12 +145,15 @@ class AdmittedTask:
         evidence_path: Path = DEFAULT_ADMISSION_EVIDENCE,
         *,
         source_repository: Path = DEFAULT_SOURCE_REPOSITORY,
-        task_package: Path = DEFAULT_TASK_PACKAGE,
+        task_package: Path | None = None,
     ) -> "AdmittedTask":
+        """Load an admitted task; the package defaults to the one admission recorded, else the ML Tutor task."""
         evidence_path = evidence_path.expanduser().resolve()
-        task_package = task_package.expanduser().resolve()
         source_repository = source_repository.expanduser().resolve()
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        if task_package is None:
+            task_package = Path(evidence.get("task_package_path") or DEFAULT_TASK_PACKAGE)
+        task_package = task_package.expanduser().resolve()
         if evidence.get("assessment", {}).get("status") != "admitted":
             raise ValueError("attempts require task evidence with an admitted assessment")
         manifest = json.loads((task_package / "manifest.json").read_text(encoding="utf-8"))
@@ -176,10 +182,12 @@ class AdmittedTask:
             runtime_version=manifest["environment"]["runtime"].removeprefix("Python "),
             public_task_path=task_package / manifest["files"]["public_task"],
             defect_mutation_path=task_package / manifest["files"]["defect_mutation"],
-            evaluator_directory=task_package / "curator",
+            evaluator_directory=(task_package / manifest["files"]["acceptance_checks"]).parent,
             dockerfile_path=task_package / manifest["files"]["dockerfile"],
             expected_base_image=manifest["environment"]["image"],
             admission_evidence_path=evidence_path,
+            source_paths=tuple(manifest["source"]["paths"]),
+            build_network=task_build_network(manifest["environment"]),
         )
 
 
@@ -403,6 +411,7 @@ def attempt_and_evaluate(
             result["metadata"]["provider_metadata_error"] = (
                 f"{type(exc).__name__}: {exc}"
             )
+    check_ids = admitted_task.task_identity["acceptance_check_ids"]
     started = time.monotonic()
     attempt_deadline = started + budgets.attempt_deadline_seconds
     work_deadline = attempt_deadline - budgets.cleanup_timeout_seconds
@@ -420,6 +429,7 @@ def attempt_and_evaluate(
             admitted_task.dockerfile_path.parent,
             expected_base_image=admitted_task.expected_base_image,
             expected_python_version=admitted_task.runtime_version,
+            build_network=admitted_task.build_network,
             deadline=work_deadline,
         )
         image_evidence["admission_image_id"] = result["metadata"]["admission_recorded_image_id"]
@@ -431,6 +441,7 @@ def attempt_and_evaluate(
                 admitted_task.source_revision,
                 admitted_task.defect_mutation_path,
                 defect_repository,
+                required_paths=admitted_task.source_paths,
                 deadline=work_deadline,
             )
             defect_baseline = _snapshot_repository(defect_repository)
@@ -658,9 +669,9 @@ def attempt_and_evaluate(
                     admitted_task=admitted_task,
                     timeout_seconds=budgets.evaluation_timeout_seconds,
                 )
-                evaluation_category = _finalize_evaluation(result, evaluation, trace, sink)
+                evaluation_category = _finalize_evaluation(result, evaluation, trace, check_ids, sink)
             elif result["candidate"].get("status") == "unavailable":
-                evaluation_category = _finalize_evaluation(result, result["evaluation"], trace, sink)
+                evaluation_category = _finalize_evaluation(result, result["evaluation"], trace, check_ids, sink)
     except KeyboardInterrupt as exc:
         result["termination_reason"] = "interrupted"
         result["functional_verdict"] = "invalid_environment"
@@ -742,7 +753,7 @@ def attempt_and_evaluate(
                             admitted_task=admitted_task,
                             timeout_seconds=budgets.evaluation_timeout_seconds,
                         )
-                    evaluation_category = _finalize_evaluation(result, evaluation, trace, sink)
+                    evaluation_category = _finalize_evaluation(result, evaluation, trace, check_ids, sink)
             except EnvironmentFailure as exc:
                 evaluation = {"status": "invalid_patch", "checks": {}, "error": str(exc)}
                 result["candidate"] = {
@@ -751,7 +762,7 @@ def attempt_and_evaluate(
                 }
                 _record_final(trace, sink, "patch_collection", status="unavailable",
                               error_category="invalid_patch", error=str(exc))
-                evaluation_category = _finalize_evaluation(result, evaluation, trace, sink)
+                evaluation_category = _finalize_evaluation(result, evaluation, trace, check_ids, sink)
         result["duration_seconds"] = round(time.monotonic() - started, 6)
         result["metadata"]["duration_seconds"] = result["duration_seconds"]
         result["metadata"]["finished_at"] = _timestamp()

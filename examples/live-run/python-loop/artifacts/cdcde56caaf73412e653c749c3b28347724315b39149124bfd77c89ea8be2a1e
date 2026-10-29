@@ -1,0 +1,6 @@
+// ML tutor golden set: 24 cases (12 concept, 4 cross, 4 offtopic, 4 premise).
+// {id, type, input, expected_sections, key_facts}. Lines starting with // are ignored.
+// DRAFT by Claude, every key fact checked against source/sections.jsonl.
+// The team must review and agree these BEFORE the first eval run, then never change them to move a score.
+// expected_sections: the answer must cite one of them (cross: all of them). Off-topic cases expect no citation.
+---

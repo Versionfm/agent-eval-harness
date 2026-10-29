@@ -1,0 +1,45 @@
+{
+  "admission_evidence": "/path/to/evidence/admission/admission.json",
+  "attempt_budgets": {
+    "attempt_deadline_seconds": 600.0,
+    "cleanup_timeout_seconds": 5,
+    "evaluation_timeout_seconds": 90,
+    "max_context_bytes": 131072,
+    "max_graph_steps": null,
+    "max_model_calls": 30,
+    "max_provider_retries": 1,
+    "provider_retry_delay_seconds": 0,
+    "shell_timeout_seconds": 60,
+    "tool_output_limit_bytes": 16384
+  },
+  "attempt_output_budget_usd_each": 0.15,
+  "budget_calibration_status": "experimental_proposal_not_benchmark_accepted",
+  "budget_note": "Ceilings are recorded for this first bounded comparison; they are not accepted benchmark settings or evidence of calibration across repeated runs.",
+  "credential_source": "private file, read by the outer harness",
+  "endpoint": "https://api.deepseek.com/chat/completions",
+  "execution_mode": "live_https",
+  "expected_observed_model": "DeepSeek-V4.1-Flash",
+  "fresh_baseline_policy": "attempt_and_evaluate prepares a new defective copy per orchestrator",
+  "model_settings": {
+    "max_output_tokens": 20000,
+    "reasoning_effort": "low",
+    "thinking": "enabled"
+  },
+  "pricing_source_checked_at": "2026-10-10",
+  "pricing_source_url": "https://api-docs.deepseek.com/quick_start/pricing/",
+  "provider": "deepseek",
+  "requested_model": "deepseek-flash",
+  "schema_version": "1",
+  "scripted_parity_evidence": "/path/to/evidence/parity/comparison.json",
+  "shared_budget_usd": 0.35,
+  "smoke": {
+    "budget_usd": 0.01,
+    "max_output_tokens": 512,
+    "max_retries_per_turn": 1,
+    "timeout_seconds": 20
+  },
+  "source_revision": "6890d9eae6ebd2967553eaf5a0c5753c26322182",
+  "started_at": "2026-10-29T13:53:15.666064+00:00",
+  "status": "configured_before_provider_call",
+  "task_id": "ml-tutor-title-relevance"
+}

@@ -1,0 +1,32 @@
+import unittest
+
+from app.source import extract_citations, passages_for, retrieve
+
+SECTIONS = [
+    {"id": "3.1", "title": "Linear Regression", "url": "u", "text": "Regression predicts a number."},
+    {"id": "3.1.1", "title": "Basics", "url": "u", "text": "Squared loss and the analytic solution."},
+    {"id": "3.7.1", "title": "Norms and Weight Decay", "url": "u",
+     "text": "Weight decay adds an L2 penalty on the weights to the loss."},
+    {"id": "3.10", "title": "Unrelated", "url": "u", "text": "Something else entirely."},
+    {"id": "12.4.1", "title": "Stochastic Gradient Updates", "url": "u",
+     "text": "Stochastic gradient descent uses one example per update."},
+]
+
+
+class ExtractCitationsTest(unittest.TestCase):
+    def test_finds_bracketed_section_ids_including_lists(self):
+        text = "Weight decay shrinks weights [3.7.1]. SGD is noisy [12.4.1, 3.1]. Not [this]."
+        self.assertEqual(extract_citations(text), ["3.7.1", "12.4.1", "3.1"])
+
+
+class PassagesForTest(unittest.TestCase):
+    def test_a_section_citation_covers_its_subsections_but_not_lookalikes(self):
+        ids = [s["id"] for s in passages_for(["3.1"], SECTIONS)]
+        self.assertEqual(ids, ["3.1", "3.1.1"])
+
+
+class RetrieveTest(unittest.TestCase):
+    def test_ranks_the_section_that_shares_the_question_terms_first(self):
+        top = retrieve("what does weight decay do to the weights?", SECTIONS, k=2)
+        self.assertEqual(top[0]["id"], "3.7.1")
+        self.assertEqual(len(top), 2)

@@ -1,0 +1,149 @@
+{
+  "attempts": {
+    "langgraph": {
+      "agent_repair_assessment": "success",
+      "attempt_id": "be8a7fc580894b79809ed50aca1dc251",
+      "deadline": {
+        "deadline_stop": false,
+        "limit_seconds": 600.0,
+        "used_fraction": 0.084454
+      },
+      "directory": "examples/live-run/langgraph",
+      "duration_seconds": 50.672162,
+      "invalid_reason": null,
+      "observed_models": [
+        "deepseek-flash"
+      ],
+      "overhead": {
+        "observer_events": 162,
+        "observer_seconds": 0.617376,
+        "share_of_attempt": 0.012184
+      },
+      "qualitative_review": {
+        "status": "pending"
+      },
+      "recorded_attempt_verdict": "success",
+      "recording": {
+        "failure": null,
+        "format": "agent-eval-harness/attempt-events",
+        "labels": {},
+        "problems": [],
+        "state": "complete",
+        "torn_tail_bytes": 0,
+        "unresolved_operations": [],
+        "verified_events": 162
+      },
+      "requested_model": "deepseek-flash",
+      "status": "completed",
+      "termination_reason": "agent_completed",
+      "usage": {
+        "calls": 12,
+        "completion_tokens": 5532,
+        "estimated_cost_usd": 0.005187006,
+        "prompt_cache_hit_tokens": 122752,
+        "prompt_cache_miss_tokens": 9997,
+        "prompt_tokens": 132749,
+        "reasoning_tokens": 3731,
+        "reported_cost_usd": "unavailable"
+      },
+      "valid_measurement": true
+    },
+    "python-loop": {
+      "agent_repair_assessment": "success",
+      "attempt_id": "c80bb9109f1d4b15ac478ec810387943",
+      "deadline": {
+        "deadline_stop": false,
+        "limit_seconds": 600.0,
+        "used_fraction": 0.132241
+      },
+      "directory": "examples/live-run/python-loop",
+      "duration_seconds": 79.344831,
+      "invalid_reason": null,
+      "observed_models": [
+        "deepseek-flash"
+      ],
+      "overhead": {
+        "observer_events": 125,
+        "observer_seconds": 0.533044,
+        "share_of_attempt": 0.006718
+      },
+      "qualitative_review": {
+        "status": "pending"
+      },
+      "recorded_attempt_verdict": "success",
+      "recording": {
+        "failure": null,
+        "format": "agent-eval-harness/attempt-events",
+        "labels": {},
+        "problems": [],
+        "state": "complete",
+        "torn_tail_bytes": 0,
+        "unresolved_operations": [],
+        "verified_events": 125
+      },
+      "requested_model": "deepseek-flash",
+      "status": "completed",
+      "termination_reason": "agent_completed",
+      "usage": {
+        "calls": 13,
+        "completion_tokens": 10441,
+        "estimated_cost_usd": 0.007908642,
+        "prompt_cache_hit_tokens": 142464,
+        "prompt_cache_miss_tokens": 8111,
+        "prompt_tokens": 150575,
+        "reasoning_tokens": 6979,
+        "reported_cost_usd": "unavailable"
+      },
+      "valid_measurement": true
+    }
+  },
+  "budgets_usd": {
+    "combined_ceiling": 0.35,
+    "per_attempt": 0.15,
+    "smoke": 0.01,
+    "stage_sum": 0.31
+  },
+  "completed_at": "2026-10-29T13:55:27.622241+00:00",
+  "effective_settings": {
+    "attempt_deadline_seconds": 600.0,
+    "max_context_bytes": 131072,
+    "max_model_calls": 30,
+    "max_output_tokens": 20000,
+    "shell_timeout_seconds": 60
+  },
+  "execution_mode": "live_https",
+  "experiment": "examples/live-run/experiment.json",
+  "live_acceptance_status": "pending_human_review",
+  "live_measurement": true,
+  "pricing": {
+    "peak_band_utc": "Monday to Friday, 01:00-03:59 and 06:00-09:59 UTC, outside declared holidays",
+    "rates_usd_per_million_tokens": {
+      "offpeak": {
+        "cache_hit_input": 0.003,
+        "cache_miss_input": 0.15,
+        "output": 0.6
+      },
+      "peak": {
+        "cache_hit_input": 0.006,
+        "cache_miss_input": 0.3,
+        "output": 1.2
+      }
+    },
+    "reported_cost_source": "not provided by the DeepSeek response; amounts are usage-based estimates",
+    "source_checked_at": "2026-10-10",
+    "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+  },
+  "report": "examples/live-run/report.html",
+  "schema": "agent-eval-harness/live-pair",
+  "schema_version": 1,
+  "shared_spend_budget": {
+    "limit_usd": 0.35,
+    "name": "smoke-plus-matched-attempts",
+    "remaining_usd": 0.336808448,
+    "reserved_or_estimated_usd": 0.013191552,
+    "status": "within_limit"
+  },
+  "smoke_artifact": "examples/live-run/smoke/smoke.json",
+  "status": "completed",
+  "valid_measurement": true
+}

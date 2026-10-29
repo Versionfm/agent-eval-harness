@@ -1,0 +1,266 @@
+{
+  "account_access": "confirmed",
+  "completed_at": "2026-10-29T13:53:17.445054+00:00",
+  "continuation_status": "verified",
+  "conversation": [
+    {
+      "content": "This is a bounded API smoke check. Call the search_text tool exactly once with query 'deepseek-smoke-sentinel'. Do not edit files or run shell commands. After receiving its result, reply exactly SMOKE_OK.",
+      "role": "user"
+    },
+    {
+      "content": "",
+      "reasoning_content": "",
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"query\": \"deepseek-smoke-sentinel\"}",
+            "name": "search_text"
+          },
+          "id": "call_00_ET_k8Dwyp9wHu8xJz5ZwRZp5094",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "{\"output\": \"Controlled smoke sentinel found; no repository was inspected.\", \"status\": \"ok\"}",
+      "name": "search_text",
+      "role": "tool",
+      "tool_call_id": "call_00_ET_k8Dwyp9wHu8xJz5ZwRZp5094"
+    }
+  ],
+  "endpoint": "https://api.deepseek.com/chat/completions",
+  "events": [
+    {
+      "duration_seconds": 0.856704,
+      "response": {
+        "content": "",
+        "observed_model": "deepseek-flash",
+        "reasoning_fields": {
+          "reasoning_content": ""
+        },
+        "tool_calls": [
+          {
+            "arguments": {
+              "query": "deepseek-smoke-sentinel"
+            },
+            "call_id": "call_00_ET_k8Dwyp9wHu8xJz5ZwRZp5094",
+            "name": "search_text"
+          }
+        ],
+        "usage": {
+          "billing": {
+            "estimated_cost": {
+              "amount": 5.3802e-05,
+              "currency": "USD",
+              "status": "estimated"
+            },
+            "pricing": {
+              "chinese_public_holidays": [],
+              "holiday_calendar_status": "not_configured",
+              "pricing_timestamp_utc": "2026-10-29T13:53:16.523033+00:00",
+              "rate_band": "offpeak",
+              "rates_usd_per_million_tokens": {
+                "cache_hit_input": 0.003,
+                "cache_miss_input": 0.15,
+                "output": 0.6
+              },
+              "source_checked_at": "2026-10-10",
+              "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+            },
+            "reported_cost": {
+              "amount": null,
+              "currency": "USD",
+              "status": "unavailable"
+            },
+            "reservation_usd": 0.0010974
+          },
+          "completion_tokens": 44,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 384,
+          "prompt_cache_miss_tokens": 175,
+          "prompt_tokens": 559,
+          "prompt_tokens_details": {
+            "cached_tokens": 384
+          },
+          "provider_finish_reason": "tool_calls",
+          "reasoning_tokens": 0,
+          "total_tokens": 603
+        }
+      },
+      "status": "ok"
+    },
+    {
+      "duration_seconds": 0.921858,
+      "response": {
+        "content": "SMOKE_OK",
+        "observed_model": "deepseek-flash",
+        "reasoning_fields": {
+          "reasoning_content": ""
+        },
+        "tool_calls": [],
+        "usage": {
+          "billing": {
+            "estimated_cost": {
+              "amount": 4.2102e-05,
+              "currency": "USD",
+              "status": "estimated"
+            },
+            "pricing": {
+              "chinese_public_holidays": [],
+              "holiday_calendar_status": "not_configured",
+              "pricing_timestamp_utc": "2026-10-29T13:53:17.444941+00:00",
+              "rate_band": "offpeak",
+              "rates_usd_per_million_tokens": {
+                "cache_hit_input": 0.003,
+                "cache_miss_input": 0.15,
+                "output": 0.6
+              },
+              "source_checked_at": "2026-10-10",
+              "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+            },
+            "reported_cost": {
+              "amount": null,
+              "currency": "USD",
+              "status": "unavailable"
+            },
+            "reservation_usd": 0.0012252
+          },
+          "completion_tokens": 5,
+          "completion_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 384,
+          "prompt_cache_miss_tokens": 253,
+          "prompt_tokens": 637,
+          "prompt_tokens_details": {
+            "cached_tokens": 384
+          },
+          "provider_finish_reason": "stop",
+          "reasoning_tokens": 0,
+          "total_tokens": 642
+        }
+      },
+      "status": "ok"
+    }
+  ],
+  "expected_observed_model": "DeepSeek-V4.1-Flash",
+  "max_provider_retries_per_turn": 1,
+  "observed_model": "deepseek-flash",
+  "pricing_source_checked_at": "2026-10-10",
+  "pricing_source_url": "https://api-docs.deepseek.com/quick_start/pricing/",
+  "pricing_timestamp_utc": "2026-10-29T13:53:15.666391+00:00",
+  "provider": "deepseek",
+  "requested_model": "deepseek-flash",
+  "retry_count": 0,
+  "settings": {
+    "max_output_tokens": 512,
+    "reasoning_effort": "low",
+    "thinking": "enabled",
+    "tool_choice": "provider-selected; not forced"
+  },
+  "spend_budget": {
+    "limit_usd": 0.01,
+    "name": "DeepSeek smoke",
+    "remaining_usd": 0.009904096,
+    "reserved_or_estimated_usd": 9.5904e-05,
+    "shared_budget": {
+      "limit_usd": 0.35,
+      "name": "smoke-plus-matched-attempts",
+      "remaining_usd": 0.349904096,
+      "reserved_or_estimated_usd": 9.5904e-05,
+      "status": "within_limit"
+    },
+    "status": "within_limit"
+  },
+  "started_at": "2026-10-29T13:53:15.666385+00:00",
+  "status": "passed",
+  "timeout_seconds_per_request": 20,
+  "tool_call_status": "verified",
+  "usage_by_response": [
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 5.3802e-05,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:53:16.523033+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0010974
+      },
+      "completion_tokens": 44,
+      "completion_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "prompt_cache_hit_tokens": 384,
+      "prompt_cache_miss_tokens": 175,
+      "prompt_tokens": 559,
+      "prompt_tokens_details": {
+        "cached_tokens": 384
+      },
+      "provider_finish_reason": "tool_calls",
+      "reasoning_tokens": 0,
+      "total_tokens": 603
+    },
+    {
+      "billing": {
+        "estimated_cost": {
+          "amount": 4.2102e-05,
+          "currency": "USD",
+          "status": "estimated"
+        },
+        "pricing": {
+          "chinese_public_holidays": [],
+          "holiday_calendar_status": "not_configured",
+          "pricing_timestamp_utc": "2026-10-29T13:53:17.444941+00:00",
+          "rate_band": "offpeak",
+          "rates_usd_per_million_tokens": {
+            "cache_hit_input": 0.003,
+            "cache_miss_input": 0.15,
+            "output": 0.6
+          },
+          "source_checked_at": "2026-10-10",
+          "source_url": "https://api-docs.deepseek.com/quick_start/pricing/"
+        },
+        "reported_cost": {
+          "amount": null,
+          "currency": "USD",
+          "status": "unavailable"
+        },
+        "reservation_usd": 0.0012252
+      },
+      "completion_tokens": 5,
+      "completion_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "prompt_cache_hit_tokens": 384,
+      "prompt_cache_miss_tokens": 253,
+      "prompt_tokens": 637,
+      "prompt_tokens_details": {
+        "cached_tokens": 384
+      },
+      "provider_finish_reason": "stop",
+      "reasoning_tokens": 0,
+      "total_tokens": 642
+    }
+  ]
+}

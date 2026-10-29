@@ -29,7 +29,7 @@ class EvaluatorFailureClassificationTests(unittest.TestCase):
         )
         result = {"trace": []}
 
-        _finalize_evaluation(result, evaluation, result["trace"])
+        _finalize_evaluation(result, evaluation, result["trace"], CHECK_IDS)
 
         self.assertEqual(evaluation["status"], "completed")
         self.assertEqual(set(evaluation["checks"]), set(CHECK_IDS))

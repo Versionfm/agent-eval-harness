@@ -14,6 +14,11 @@
     "history_mode",
     "input_order_independence"
   ],
+  "expected_defect_failures": [
+    "title_retrieval",
+    "title_context",
+    "input_order_independence"
+  ],
   "source": {
     "repository": "https://github.com/Versionfm/prompt-engineering-group-project.git",
     "revision": "6890d9eae6ebd2967553eaf5a0c5753c26322182",
@@ -29,6 +34,7 @@
     "third_party_dependencies": [],
     "dependency_basis": "The selected source and injected fake-chat path use only the Python standard library.",
     "network": "disabled",
+    "build_network": "none",
     "task_mount": "read-only",
     "evaluator_mount": "not mounted; assertions run in the outer harness"
   },

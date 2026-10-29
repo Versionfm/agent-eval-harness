@@ -9,9 +9,8 @@ from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import tempfile
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
-from agent_eval_harness.bench.admission import CHECK_IDS
 from agent_eval_harness.bench.environment import run_canonical_checks
 from agent_eval_harness.harness.permissions import EnvironmentFailure
 from agent_eval_harness.harness.hooks import NULL_EVENT_SINK, AttemptEventSink
@@ -124,7 +123,7 @@ def _materialize_snapshot(
 
 def _finalize_evaluation(
     result: dict[str, Any], evaluation: dict[str, Any], trace: list[dict[str, Any]],
-    sink: AttemptEventSink = NULL_EVENT_SINK,
+    check_ids: Sequence[str], sink: AttemptEventSink = NULL_EVENT_SINK,
 ) -> str | None:
     """Apply the same evaluator-to-verdict mapping on normal and recovery paths; returns the failure category."""
     result["evaluation"] = evaluation
@@ -134,7 +133,7 @@ def _finalize_evaluation(
     elif (
         evaluation.get("status") != "completed"
         or not isinstance(checks, Mapping)
-        or set(checks) != set(CHECK_IDS)
+        or set(checks) != set(check_ids)
         or any(type(value) is not bool for value in checks.values())
     ):
         verdict, category = "invalid_environment", "evaluation_environment_error"
